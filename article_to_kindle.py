@@ -35,7 +35,9 @@ ALLOWED_HOSTS = ("medium.com", "towardsdatascience.com")
 ALLOWED_TAGS = {
     "a", "b", "blockquote", "br", "code", "em", "figcaption", "figure", "h1",
     "h2", "h3", "h4", "hr", "i", "img", "li", "ol", "p", "pre", "strong",
-    "table", "tbody", "td", "th", "thead", "tr", "ul",
+    "table", "tbody", "td", "th", "thead", "tr", "ul", "math", "mrow", "mi",
+    "mn", "mo", "mfrac", "msqrt", "msup", "msub", "msubsup", "mtext", "mstyle",
+    "semantics", "annotation",
 }
 IMAGE_EXTENSIONS = {
     "image/gif": ".gif",
@@ -148,7 +150,138 @@ def remove_noise(root: Tag) -> None:
         tag.decompose()
 
 
+LATEX_SYMBOLS = {
+    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε",
+    "theta": "θ", "lambda": "λ", "mu": "μ", "pi": "π", "sigma": "σ",
+    "phi": "φ", "omega": "ω", "in": "∈", "notin": "∉", "cdot": "⋅",
+    "times": "×", "pm": "±", "leq": "≤", "geq": "≥", "neq": "≠",
+    "approx": "≈", "rightarrow": "→", "to": "→", "sum": "∑", "prod": "∏",
+    "int": "∫", "infty": "∞", "partial": "∂", "nabla": "∇", "ldots": "…",
+    "mathbb": "", "mathbf": "", "mathrm": "", "mathcal": "",
+}
+LATEX_OPERATORS = {"in", "notin", "cdot", "times", "pm", "leq", "geq", "neq", "approx", "rightarrow", "to", "sum", "prod", "int", "infty", "partial", "nabla", "ldots"}
+
+
+def latex_to_mathml(latex: str, display: bool = False) -> str:
+    """Convert the common LaTeX emitted by article renderers to EPUB MathML."""
+    source = latex.strip()
+    position = 0
+
+    def group() -> list[str]:
+        nonlocal position
+        if position < len(source) and source[position] == "{":
+            position += 1
+            result = expression("}")
+            if position < len(source) and source[position] == "}":
+                position += 1
+            return result
+        return atom()
+
+    def atom() -> list[str]:
+        nonlocal position
+        while position < len(source) and source[position].isspace():
+            position += 1
+        if position >= len(source):
+            return []
+        if source[position] == "\\":
+            position += 1
+            start = position
+            while position < len(source) and source[position].isalpha():
+                position += 1
+            command = source[start:position] or (source[position:position + 1] if position < len(source) else "")
+            if not command.isalpha():
+                position += 1
+            if command in {"frac"}:
+                numerator, denominator = group(), group()
+                return [f"<mfrac><mrow>{''.join(numerator)}</mrow><mrow>{''.join(denominator)}</mrow></mfrac>"]
+            if command == "sqrt":
+                return [f"<msqrt><mrow>{''.join(group())}</mrow></msqrt>"]
+            if command == "text":
+                return [f"<mtext>{escape(''.join(re.sub(r'<[^>]+>', '', x) for x in group()))}</mtext>"]
+            if command in {"mathbb", "mathbf", "mathrm", "mathcal"}:
+                return group()
+            if command in {",", ";", "!", " "}:
+                return []
+            if command in {"left", "right"}:
+                return atom()
+            if command in LATEX_SYMBOLS:
+                value = LATEX_SYMBOLS[command]
+                if command in {"sum", "prod", "int"}:
+                    return [f"<mo>{value}</mo>"]
+                return [f"<mo>{value}</mo>" if command in LATEX_OPERATORS else f"<mi>{value}</mi>"]
+            return [f"<mi>{escape(command)}</mi>"]
+        if source[position] == "{":
+            return group()
+        char = source[position]
+        position += 1
+        if char.isdigit():
+            return [f"<mn>{char}</mn>"]
+        if char.isalpha():
+            return [f"<mi>{char}</mi>"]
+        return [f"<mo>{escape(char)}</mo>"]
+
+    def expression(stop: str = "") -> list[str]:
+        nonlocal position
+        result: list[str] = []
+        while position < len(source) and source[position] != stop:
+            current = group()
+            if not current:
+                break
+            if position < len(source) and source[position] in "^_":
+                marker = source[position]
+                position += 1
+                exponent = group()
+                tag = "msup" if marker == "^" else "msub"
+                current = [f"<{tag}><mrow>{''.join(current)}</mrow><mrow>{''.join(exponent)}</mrow></{tag}>"]
+                if position < len(source) and source[position] in "^_":
+                    marker = source[position]
+                    position += 1
+                    other = group()
+                    current = [f"<msubsup><mrow>{''.join(current)}</mrow><mrow>{''.join(other if marker == '_' else exponent)}</mrow><mrow>{''.join(exponent if marker == '_' else other)}</mrow></msubsup>"]
+            result.extend(current)
+        return result
+
+    body = "".join(expression())
+    display_attr = ' display="block"' if display else ""
+    return f'<math xmlns="http://www.w3.org/1998/Math/MathML"{display_attr}><mrow>{body}</mrow></math>'
+
+
+def _replace_with_math(node: Tag, latex: str, display: bool = False) -> None:
+    fragment = BeautifulSoup(latex_to_mathml(latex, display), "html.parser")
+    node.replace_with(fragment.math)
+
+
+def extract_math(root: Tag) -> None:
+    """Turn renderer annotations and explicit LaTeX delimiters into MathML."""
+    for tag in list(root.find_all(["script", "span", "div"])[::-1]):
+        classes = " ".join(tag.get("class", [])) if tag.name != "script" else ""
+        annotation = tag.find("annotation", attrs={"encoding": "application/x-tex"})
+        latex = tag.get("data-latex") or tag.get("data-tex") or (annotation.get_text() if annotation else None)
+        if tag.name == "script" and "math/tex" in tag.get("type", ""):
+            latex = tag.get_text()
+        if latex:
+            _replace_with_math(tag, latex, "display" in classes or "display" in tag.get("data-mode", ""))
+
+    for text_node in list(root.find_all(string=True)):
+        if text_node.parent and text_node.parent.name in {"math", "script", "style"}:
+            continue
+        value = str(text_node)
+        pattern = re.compile(r"(\\\[(.+?)\\\]|\\\((.+?)\\\)|\$\$(.+?)\$\$|\$(?!\s)(.+?)(?<!\s)\$)", re.DOTALL)
+        if not pattern.search(value):
+            continue
+        fragment = BeautifulSoup("", "html.parser")
+        last = 0
+        for match in pattern.finditer(value):
+            fragment.append(value[last:match.start()])
+            latex = next(part for part in match.groups()[1:] if part is not None)
+            fragment.append(BeautifulSoup(latex_to_mathml(latex, match.group().startswith(("\\[", "$$"))), "html.parser").math)
+            last = match.end()
+        fragment.append(value[last:])
+        text_node.replace_with(*list(fragment.contents))
+
+
 def sanitize_article(root: Tag, base_url: str) -> None:
+    extract_math(root)
     for tag in list(root.find_all(True)):
         if tag.name not in ALLOWED_TAGS:
             tag.unwrap()
@@ -165,7 +298,7 @@ def sanitize_article(root: Tag, base_url: str) -> None:
             else:
                 tag.decompose()
         else:
-            tag.attrs = {}
+            tag.attrs = {key: value for key, value in tag.attrs.items() if tag.name == "math" and key in {"xmlns", "display"}}
 
 
 def download_images(root: Tag) -> list[ImageAsset]:
@@ -262,6 +395,7 @@ code { font-family: monospace; }
 img { display: block; max-width: 100%; height: auto; margin: 1em auto; }
 blockquote { border-left: 0.25em solid #aaa; margin-left: 0; padding-left: 1em; }
 table { border-collapse: collapse; max-width: 100%; } td, th { border: 1px solid #aaa; padding: 0.35em; }
+math { font-size: 1.05em; } math[display="block"] { display: block; margin: 1em auto; text-align: center; }
 """.strip()
 
 
@@ -338,8 +472,10 @@ def send_to_kindle(article: Article, epub: Path) -> None:
 
 
 def self_test() -> None:
-    sample = """<html><head><meta property="og:title" content="Hello Kindle"/><meta name="author" content="Ada"/></head><body><article><h1>Hello Kindle</h1><p>This is enough sample text to make the article extractor accept it as a readable article body for the EPUB self-test.</p><h2>Second section</h2><pre><code>print('hello')</code></pre><nav>Ignore this</nav></article></body></html>"""
+    sample = """<html><head><meta property="og:title" content="Hello Kindle"/><meta name="author" content="Ada"/></head><body><article><h1>Hello Kindle</h1><p>This is enough sample text to make the article extractor accept it as a readable article body for the EPUB self-test.</p><p>Formula: \\(x^2 + \\frac{1}{2}\\).</p><span class="katex"><annotation encoding="application/x-tex">y=\\sqrt{x}</annotation></span><h2>Second section</h2><pre><code>print('hello')</code></pre><nav>Ignore this</nav></article></body></html>"""
     article = extract_article(sample, "https://medium.com/example/hello")
+    assert "<math" in article.content_html and "<mfrac>" in article.content_html
+    assert "\\frac" not in article.content_html
     with tempfile.TemporaryDirectory() as directory:
         epub = Path(directory) / "hello.epub"
         write_epub(article, epub)
