@@ -21,6 +21,8 @@ Run the local check without making a network request:
 
 To email the generated EPUB to Kindle, configure an approved sender and run with `--send`:
 
+Use [.env.example](.env.example) as a template. The application reads these values from the process environment; it does not load `.env` files automatically.
+
 ```bash
 export KINDLE_EMAIL='your-kindle-address@example.com'
 export SMTP_HOST='smtp.example.com'

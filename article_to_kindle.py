@@ -8,23 +8,22 @@ import hashlib
 import mimetypes
 import os
 import re
-import smtplib
-import ssl
 import sys
 import tempfile
-import uuid
 import zipfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from email.message import EmailMessage
 from html import escape
 from pathlib import Path
-from typing import Iterable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup, Comment, Tag
+
+from config import KINDLE_EMAIL
+from delivery import send_to_kindle
+from epub_writer import write_epub
+from errors import ArticleError
 
 
 USER_AGENT = "article-to-kindle/0.1 (+https://github.com/)"
@@ -46,10 +45,6 @@ IMAGE_EXTENSIONS = {
     "image/svg+xml": ".svg",
     "image/webp": ".webp",
 }
-
-
-class ArticleError(Exception):
-    """An expected user-facing error."""
 
 
 @dataclass
@@ -372,105 +367,6 @@ def available_output(article: Article, requested: Path | None) -> Path:
     return candidate
 
 
-def epub_xhtml(article: Article) -> str:
-    return f'''<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>{escape(article.title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
-<body><article><h1>{escape(article.title)}</h1><p class="byline">{escape(article.author)}</p><p class="source">Source: <a href="{escape(article.source_url, quote=True)}">{escape(article.source_url)}</a></p>{article.content_html}</article></body></html>'''
-
-
-def nav_xhtml(article: Article) -> str:
-    items = "".join(f'<li><a href="article.xhtml#{escape(item_id)}">{escape(text)}</a></li>' for item_id, text in article.headings)
-    return f'''<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Contents</title></head><body><nav epub:type="toc" id="toc" xmlns:epub="http://www.idpf.org/2007/ops"><h1>Contents</h1><ol><li><a href="article.xhtml">{escape(article.title)}</a></li>{items}</ol></nav></body></html>'''
-
-
-CSS = """
-body { font-family: serif; line-height: 1.5; margin: 5%; }
-h1, h2, h3, h4 { line-height: 1.2; margin-top: 1.5em; }
-.byline, .source { color: #555; font-size: 0.9em; }
-pre { background: #f4f4f4; padding: 0.8em; white-space: pre-wrap; font-family: monospace; }
-code { font-family: monospace; }
-img { display: block; max-width: 100%; height: auto; margin: 1em auto; }
-blockquote { border-left: 0.25em solid #aaa; margin-left: 0; padding-left: 1em; }
-table { border-collapse: collapse; max-width: 100%; } td, th { border: 1px solid #aaa; padding: 0.35em; }
-math { font-size: 1.05em; } math[display="block"] { display: block; margin: 1em auto; text-align: center; }
-""".strip()
-
-
-def write_epub(article: Article, destination: Path) -> None:
-    identifier = uuid.uuid5(uuid.NAMESPACE_URL, article.source_url)
-    image_manifest = "".join(
-        f'<item id="image-{index}" href="{escape(asset.href, quote=True)}" media-type="{escape(asset.media_type, quote=True)}"/>'
-        for index, asset in enumerate(article.images, start=1)
-    )
-    manifest = (
-        '<item id="article" href="article.xhtml" media-type="application/xhtml+xml"/>'
-        '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
-        '<item id="css" href="style.css" media-type="text/css"/>'
-        f"{image_manifest}"
-    )
-    opf = f'''<?xml version="1.0" encoding="utf-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="book-id" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="book-id">urn:uuid:{identifier}</dc:identifier><dc:title>{escape(article.title)}</dc:title><dc:creator>{escape(article.author)}</dc:creator><dc:language>en</dc:language><dc:source>{escape(article.source_url)}</dc:source><meta property="dcterms:modified">{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}</meta></metadata><manifest>{manifest}</manifest><spine><itemref idref="article"/></spine></package>'''
-    container = '''<?xml version="1.0" encoding="UTF-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'''
-
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=destination.parent, suffix=".epub", delete=False) as handle:
-            temporary = Path(handle.name)
-        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as book:
-            book.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-            book.writestr("META-INF/container.xml", container)
-            book.writestr("OEBPS/content.opf", opf)
-            book.writestr("OEBPS/style.css", CSS)
-            book.writestr("OEBPS/article.xhtml", epub_xhtml(article))
-            book.writestr("OEBPS/nav.xhtml", nav_xhtml(article))
-            for asset in article.images:
-                book.writestr(f"OEBPS/{asset.href}", asset.data)
-        if not zipfile.is_zipfile(temporary):
-            raise ArticleError("EPUB creation failed validation.")
-        temporary.replace(destination)
-        temporary = None
-    finally:
-        if temporary and temporary.exists():
-            temporary.unlink()
-
-
-def required_environment(names: Iterable[str]) -> dict[str, str]:
-    values = {name: os.environ.get(name, "") for name in names}
-    missing = [name for name, value in values.items() if not value]
-    if missing:
-        raise ArticleError(f"Missing environment variables for --send: {', '.join(missing)}")
-    return values
-
-
-def send_to_kindle(article: Article, epub: Path) -> None:
-    settings = required_environment(("KINDLE_EMAIL", "SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM"))
-    port = int(os.environ.get("SMTP_PORT", "587"))
-    message = EmailMessage()
-    message["From"] = settings["SMTP_FROM"]
-    message["To"] = settings["KINDLE_EMAIL"]
-    message["Subject"] = article.title
-    message.set_content(f"{article.title}\n\nSource: {article.source_url}")
-    message.add_attachment(epub.read_bytes(), maintype="application", subtype="epub+zip", filename=epub.name)
-
-    context = ssl.create_default_context()
-    try:
-        if port == 465:
-            with smtplib.SMTP_SSL(settings["SMTP_HOST"], port, context=context, timeout=30) as client:
-                client.login(settings["SMTP_USERNAME"], settings["SMTP_PASSWORD"])
-                client.send_message(message)
-        else:
-            with smtplib.SMTP(settings["SMTP_HOST"], port, timeout=30) as client:
-                client.starttls(context=context)
-                client.login(settings["SMTP_USERNAME"], settings["SMTP_PASSWORD"])
-                client.send_message(message)
-    except (OSError, smtplib.SMTPException) as error:
-        raise ArticleError(f"EPUB was created but email delivery failed: {error}") from error
-
-
 def self_test() -> None:
     sample = """<html><head><meta property="og:title" content="Hello Kindle"/><meta name="author" content="Ada"/></head><body><article><h1>Hello Kindle</h1><p>This is enough sample text to make the article extractor accept it as a readable article body for the EPUB self-test.</p><p>Formula: \\(x^2 + \\frac{1}{2}\\).</p><span class="katex"><annotation encoding="application/x-tex">y=\\sqrt{x}</annotation></span><h2>Second section</h2><pre><code>print('hello')</code></pre><nav>Ignore this</nav></article></body></html>"""
     article = extract_article(sample, "https://medium.com/example/hello")
@@ -509,7 +405,7 @@ def main() -> int:
     print(f"Created: {output}")
     if args.send:
         send_to_kindle(article, output)
-        print(f"Sent to: {os.environ['KINDLE_EMAIL']}")
+        print(f"Sent to: {os.environ[KINDLE_EMAIL]}")
     elif args.dry_run:
         print("Dry run: email not sent.")
     return 0
