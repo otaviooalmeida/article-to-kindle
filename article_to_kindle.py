@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import mimetypes
 import os
@@ -11,14 +12,16 @@ import re
 import sys
 import tempfile
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html import escape
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote_to_bytes
 from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup, Comment, Tag
+from latex2mathml.converter import convert as latex_to_mathml_markup
 
 from config import KINDLE_EMAIL
 from delivery import send_to_kindle
@@ -29,14 +32,16 @@ from errors import ArticleError
 USER_AGENT = "article-to-kindle/0.1 (+https://github.com/)"
 MAX_HTML_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
-MAX_IMAGES = 10
+MAX_TOTAL_IMAGE_BYTES = 50 * 1024 * 1024
 ALLOWED_HOSTS = ("medium.com", "towardsdatascience.com")
 ALLOWED_TAGS = {
     "a", "b", "blockquote", "br", "code", "em", "figcaption", "figure", "h1",
     "h2", "h3", "h4", "hr", "i", "img", "li", "ol", "p", "pre", "strong",
     "table", "tbody", "td", "th", "thead", "tr", "ul", "math", "mrow", "mi",
     "mn", "mo", "mfrac", "msqrt", "msup", "msub", "msubsup", "mtext", "mstyle",
-    "semantics", "annotation",
+    "semantics", "annotation", "menclose", "merror", "mfenced", "mmultiscripts",
+    "mover", "mpadded", "mphantom", "mprescripts", "mroot", "mspace", "mtable",
+    "mtd", "mtr", "munder", "munderover", "none",
 }
 IMAGE_EXTENSIONS = {
     "image/gif": ".gif",
@@ -62,6 +67,7 @@ class Article:
     content_html: str
     headings: list[tuple[str, str]]
     images: list[ImageAsset]
+    warnings: list[str] = field(default_factory=list)
 
 
 def allowed_url(url: str) -> bool:
@@ -145,100 +151,8 @@ def remove_noise(root: Tag) -> None:
         tag.decompose()
 
 
-LATEX_SYMBOLS = {
-    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε",
-    "theta": "θ", "lambda": "λ", "mu": "μ", "pi": "π", "sigma": "σ",
-    "phi": "φ", "omega": "ω", "in": "∈", "notin": "∉", "cdot": "⋅",
-    "times": "×", "pm": "±", "leq": "≤", "geq": "≥", "neq": "≠",
-    "approx": "≈", "rightarrow": "→", "to": "→", "sum": "∑", "prod": "∏",
-    "int": "∫", "infty": "∞", "partial": "∂", "nabla": "∇", "ldots": "…",
-    "mathbb": "", "mathbf": "", "mathrm": "", "mathcal": "",
-}
-LATEX_OPERATORS = {"in", "notin", "cdot", "times", "pm", "leq", "geq", "neq", "approx", "rightarrow", "to", "sum", "prod", "int", "infty", "partial", "nabla", "ldots"}
-
-
 def latex_to_mathml(latex: str, display: bool = False) -> str:
-    """Convert the common LaTeX emitted by article renderers to EPUB MathML."""
-    source = latex.strip()
-    position = 0
-
-    def group() -> list[str]:
-        nonlocal position
-        if position < len(source) and source[position] == "{":
-            position += 1
-            result = expression("}")
-            if position < len(source) and source[position] == "}":
-                position += 1
-            return result
-        return atom()
-
-    def atom() -> list[str]:
-        nonlocal position
-        while position < len(source) and source[position].isspace():
-            position += 1
-        if position >= len(source):
-            return []
-        if source[position] == "\\":
-            position += 1
-            start = position
-            while position < len(source) and source[position].isalpha():
-                position += 1
-            command = source[start:position] or (source[position:position + 1] if position < len(source) else "")
-            if not command.isalpha():
-                position += 1
-            if command in {"frac"}:
-                numerator, denominator = group(), group()
-                return [f"<mfrac><mrow>{''.join(numerator)}</mrow><mrow>{''.join(denominator)}</mrow></mfrac>"]
-            if command == "sqrt":
-                return [f"<msqrt><mrow>{''.join(group())}</mrow></msqrt>"]
-            if command == "text":
-                return [f"<mtext>{escape(''.join(re.sub(r'<[^>]+>', '', x) for x in group()))}</mtext>"]
-            if command in {"mathbb", "mathbf", "mathrm", "mathcal"}:
-                return group()
-            if command in {",", ";", "!", " "}:
-                return []
-            if command in {"left", "right"}:
-                return atom()
-            if command in LATEX_SYMBOLS:
-                value = LATEX_SYMBOLS[command]
-                if command in {"sum", "prod", "int"}:
-                    return [f"<mo>{value}</mo>"]
-                return [f"<mo>{value}</mo>" if command in LATEX_OPERATORS else f"<mi>{value}</mi>"]
-            return [f"<mi>{escape(command)}</mi>"]
-        if source[position] == "{":
-            return group()
-        char = source[position]
-        position += 1
-        if char.isdigit():
-            return [f"<mn>{char}</mn>"]
-        if char.isalpha():
-            return [f"<mi>{char}</mi>"]
-        return [f"<mo>{escape(char)}</mo>"]
-
-    def expression(stop: str = "") -> list[str]:
-        nonlocal position
-        result: list[str] = []
-        while position < len(source) and source[position] != stop:
-            current = group()
-            if not current:
-                break
-            if position < len(source) and source[position] in "^_":
-                marker = source[position]
-                position += 1
-                exponent = group()
-                tag = "msup" if marker == "^" else "msub"
-                current = [f"<{tag}><mrow>{''.join(current)}</mrow><mrow>{''.join(exponent)}</mrow></{tag}>"]
-                if position < len(source) and source[position] in "^_":
-                    marker = source[position]
-                    position += 1
-                    other = group()
-                    current = [f"<msubsup><mrow>{''.join(current)}</mrow><mrow>{''.join(other if marker == '_' else exponent)}</mrow><mrow>{''.join(exponent if marker == '_' else other)}</mrow></msubsup>"]
-            result.extend(current)
-        return result
-
-    body = "".join(expression())
-    display_attr = ' display="block"' if display else ""
-    return f'<math xmlns="http://www.w3.org/1998/Math/MathML"{display_attr}><mrow>{body}</mrow></math>'
+    return latex_to_mathml_markup(latex.strip()).replace('display="inline"', f'display="{"block" if display else "inline"}"', 1)
 
 
 def _replace_with_math(node: Tag, latex: str, display: bool = False) -> None:
@@ -246,8 +160,9 @@ def _replace_with_math(node: Tag, latex: str, display: bool = False) -> None:
     node.replace_with(fragment.math)
 
 
-def extract_math(root: Tag) -> None:
+def extract_math(root: Tag) -> list[str]:
     """Turn renderer annotations and explicit LaTeX delimiters into MathML."""
+    failed = 0
     for tag in list(root.find_all(["script", "span", "div"])[::-1]):
         classes = " ".join(tag.get("class", [])) if tag.name != "script" else ""
         annotation = tag.find("annotation", attrs={"encoding": "application/x-tex"})
@@ -255,7 +170,11 @@ def extract_math(root: Tag) -> None:
         if tag.name == "script" and "math/tex" in tag.get("type", ""):
             latex = tag.get_text()
         if latex:
-            _replace_with_math(tag, latex, "display" in classes or "display" in tag.get("data-mode", ""))
+            try:
+                _replace_with_math(tag, latex, "display" in classes or "display" in tag.get("data-mode", ""))
+            except Exception:
+                tag.replace_with(latex)
+                failed += 1
 
     for text_node in list(root.find_all(string=True)):
         if text_node.parent and text_node.parent.name in {"math", "script", "style"}:
@@ -269,14 +188,18 @@ def extract_math(root: Tag) -> None:
         for match in pattern.finditer(value):
             fragment.append(value[last:match.start()])
             latex = next(part for part in match.groups()[1:] if part is not None)
-            fragment.append(BeautifulSoup(latex_to_mathml(latex, match.group().startswith(("\\[", "$$"))), "html.parser").math)
+            try:
+                fragment.append(BeautifulSoup(latex_to_mathml(latex, match.group().startswith(("\\[", "$$"))), "html.parser").math)
+            except Exception:
+                fragment.append(latex)
+                failed += 1
             last = match.end()
         fragment.append(value[last:])
         text_node.replace_with(*list(fragment.contents))
+    return [f"{failed} formula(s) retained as text"] if failed else []
 
 
 def sanitize_article(root: Tag, base_url: str) -> None:
-    extract_math(root)
     for tag in list(root.find_all(True)):
         if tag.name not in ALLOWED_TAGS:
             tag.unwrap()
@@ -287,7 +210,7 @@ def sanitize_article(root: Tag, base_url: str) -> None:
             tag.attrs = {"href": href} if href else {}
         elif tag.name == "img":
             source = tag.get("src") or tag.get("data-src")
-            source = make_absolute(str(source), base_url) if source else None
+            source = str(source) if source and str(source).startswith("data:image/") else make_absolute(str(source), base_url) if source else None
             if source:
                 tag.attrs = {"src": source, "alt": clean_text(str(tag.get("alt", "")))}
             else:
@@ -296,29 +219,44 @@ def sanitize_article(root: Tag, base_url: str) -> None:
             tag.attrs = {key: value for key, value in tag.attrs.items() if tag.name == "math" and key in {"xmlns", "display"}}
 
 
-def download_images(root: Tag) -> list[ImageAsset]:
+def download_images(root: Tag) -> tuple[list[ImageAsset], int]:
     assets: list[ImageAsset] = []
     fetched: dict[str, ImageAsset] = {}
+    failed = 0
+    total_bytes = 0
     for tag in list(root.find_all("img")):
         source = str(tag.get("src", ""))
         if source in fetched:
             tag["src"] = fetched[source].href
             continue
-        if len(assets) >= MAX_IMAGES:
-            tag.decompose()
-            continue
         try:
-            data, media_type, final_url = read_url(source, MAX_IMAGE_BYTES, "image/")
-            if urlparse(final_url).scheme not in {"http", "https"}:
-                raise ArticleError("Image redirected to an unsupported URL.")
+            if source.startswith("data:image/"):
+                header, encoded = source.split(",", 1)
+                media_type = header[5:].split(";", 1)[0]
+                data = base64.b64decode(encoded, validate=True) if ";base64" in header else unquote_to_bytes(encoded)
+                if len(data) > MAX_IMAGE_BYTES:
+                    raise ArticleError("Image is larger than the limit.")
+            else:
+                data, media_type, final_url = read_url(source, MAX_IMAGE_BYTES, "image/")
+                if urlparse(final_url).scheme not in {"http", "https"}:
+                    raise ArticleError("Image redirected to an unsupported URL.")
+            if media_type not in IMAGE_EXTENSIONS:
+                raise ArticleError("Unsupported image type.")
+            if total_bytes + len(data) > MAX_TOTAL_IMAGE_BYTES:
+                raise ArticleError("Article images exceed the total limit.")
             extension = IMAGE_EXTENSIONS.get(media_type, mimetypes.guess_extension(media_type) or ".img")
             asset = ImageAsset(f"images/image-{len(assets) + 1}{extension}", data, media_type)
             assets.append(asset)
+            total_bytes += len(data)
             fetched[source] = asset
             tag["src"] = asset.href
         except ArticleError:
             tag.decompose()
-    return assets
+            failed += 1
+        except (ValueError, TypeError):
+            tag.decompose()
+            failed += 1
+    return assets, failed
 
 
 def extract_article(page_html: str, source_url: str) -> Article:
@@ -331,6 +269,7 @@ def extract_article(page_html: str, source_url: str) -> Article:
         raise ArticleError("Could not find an article title.")
     author = clean_text(first_meta(soup, "author", "article:author")) or "Unknown author"
 
+    warnings = extract_math(root)
     remove_noise(root)
     sanitize_article(root, source_url)
     if len(clean_text(root.get_text(" ", strip=True))) < 100:
@@ -341,9 +280,11 @@ def extract_article(page_html: str, source_url: str) -> Article:
         heading_id = f"section-{index}"
         heading["id"] = heading_id
         headings.append((heading_id, clean_text(heading.get_text(" ", strip=True))))
-    images = download_images(root)
+    images, failed_images = download_images(root)
+    if failed_images:
+        warnings.append(f"{failed_images} image(s) omitted")
     content = "".join(str(child) for child in root.contents)
-    return Article(title, author, source_url, content, headings, images)
+    return Article(title, author, source_url, content, headings, images, warnings)
 
 
 def slugify(value: str) -> str:
@@ -359,19 +300,22 @@ def available_output(article: Article, requested: Path | None) -> Path:
             raise ArticleError(f"Output directory does not exist: {requested.parent}")
         return requested
     stem = f"{slugify(article.title)}-{hashlib.sha256(article.source_url.encode()).hexdigest()[:8]}"
-    candidate = Path.cwd() / f"{stem}.epub"
+    output_dir = Path.cwd() / "outputs"
+    output_dir.mkdir(exist_ok=True)
+    candidate = output_dir / f"{stem}.epub"
     index = 2
     while candidate.exists():
-        candidate = Path.cwd() / f"{stem}-{index}.epub"
+        candidate = output_dir / f"{stem}-{index}.epub"
         index += 1
     return candidate
 
 
 def self_test() -> None:
-    sample = """<html><head><meta property="og:title" content="Hello Kindle"/><meta name="author" content="Ada"/></head><body><article><h1>Hello Kindle</h1><p>This is enough sample text to make the article extractor accept it as a readable article body for the EPUB self-test.</p><p>Formula: \\(x^2 + \\frac{1}{2}\\).</p><span class="katex"><annotation encoding="application/x-tex">y=\\sqrt{x}</annotation></span><h2>Second section</h2><pre><code>print('hello')</code></pre><nav>Ignore this</nav></article></body></html>"""
+    sample = """<html><head><meta property="og:title" content="Hello Kindle"/><meta name="author" content="Ada"/></head><body><article><h1>Hello Kindle</h1><p>This is enough sample text to make the article extractor accept it as a readable article body for the EPUB self-test.</p><p>Formula: \\(x^2 + \\frac{1}{2}\\).</p><p>Fallback: \\(\\begin{matrix}\\).</p><span class="katex"><annotation encoding="application/x-tex">y=\\sqrt{x}</annotation></span><figure><img src="data:image/png;base64,invalid"/></figure><h2>Second section</h2><pre><code>print('hello')</code></pre><nav>Ignore this</nav></article></body></html>"""
     article = extract_article(sample, "https://medium.com/example/hello")
     assert "<math" in article.content_html and "<mfrac>" in article.content_html
-    assert "\\frac" not in article.content_html
+    assert "\\frac" not in article.content_html and "\\begin{matrix}" in article.content_html
+    assert article.warnings == ["1 formula(s) retained as text", "1 image(s) omitted"]
     with tempfile.TemporaryDirectory() as directory:
         epub = Path(directory) / "hello.epub"
         write_epub(article, epub)
@@ -390,13 +334,18 @@ def main() -> int:
     delivery.add_argument("--send", action="store_true", help="Email the EPUB to KINDLE_EMAIL")
     delivery.add_argument("--dry-run", action="store_true", help="Create the EPUB without sending email")
     parser.add_argument("--self-test", action="store_true", help="Run the built-in EPUB check")
+    parser.add_argument("--serve", action="store_true", help="Run the local API on 127.0.0.1:8765")
     args = parser.parse_args()
 
     if args.self_test:
         self_test()
         return 0
+    if args.serve:
+        import uvicorn
+        uvicorn.run("api:app", host="127.0.0.1", port=8765, log_level="warning")
+        return 0
     if not args.url:
-        parser.error("a URL is required unless --self-test is used")
+        parser.error("a URL is required unless --self-test or --serve is used")
 
     page_html, final_url = fetch_html(args.url)
     article = extract_article(page_html, final_url)
