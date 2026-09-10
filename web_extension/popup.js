@@ -30,8 +30,15 @@ async function call(path) {
 async function checkServer() {
   const { serverUrl, token } = await settings();
   if (!token) throw new Error("Configure the bearer token in Settings.");
-  const response = await fetch(`${serverUrl}/health`, { headers: { "Authorization": `Bearer ${token}` } });
-  if (!response.ok) throw new Error("Local server unavailable or not configured.");
+  try {
+    const response = await fetch(`${serverUrl}/health`, { headers: { "Authorization": `Bearer ${token}` } });
+    if (response.ok) return;
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(failure.message || `Local server rejected the request (${response.status}).`);
+  } catch (error) {
+    if (error instanceof TypeError) throw new Error("Local server unavailable or not configured.");
+    throw error;
+  }
 }
 
 document.querySelector("#download").addEventListener("click", async () => {
