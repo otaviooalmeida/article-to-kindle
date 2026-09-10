@@ -131,7 +131,7 @@ async def create_epub(capture: ArticleCapture):
 async def submit_to_kindle(capture: ArticleCapture):
     article = captured_article(capture)
     with tempfile.TemporaryDirectory() as directory:
-        output = Path(directory) / "article.epub"
+        output = Path(directory) / f"{article.title}.epub"
         write_article_epub(article, output)
         if output.stat().st_size > MAX_EPUB_BYTES:
             raise HTTPException(413, detail="Generated EPUB exceeds 50 MiB.")
