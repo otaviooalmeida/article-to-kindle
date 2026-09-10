@@ -10,7 +10,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from backend.config import KINDLE_EMAIL
+from backend.config import ALLOWED_ORIGIN, API_TOKEN, KINDLE_EMAIL
 from backend.delivery import send_to_kindle
 from backend.epub import write_epub
 from backend.errors import ArticleError
@@ -64,6 +64,9 @@ def main() -> int:
         self_test()
         return 0
     if args.serve:
+        missing = [name for name in (API_TOKEN, ALLOWED_ORIGIN) if not os.environ.get(name)]
+        if missing:
+            raise ArticleError(f"Missing environment variables for --serve: {', '.join(missing)}")
         import uvicorn
         uvicorn.run("backend.api:app", host="127.0.0.1", port=8765, log_level="warning")
         return 0
