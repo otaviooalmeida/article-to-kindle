@@ -2,7 +2,6 @@
 
 import hmac
 import os
-import sys
 import tempfile
 from pathlib import Path
 
@@ -35,7 +34,6 @@ class OriginMiddleware:
         request_origin = origin or declared_origin
         allowed_origin = os.environ.get(ALLOWED_ORIGIN, "")
         if (origin and declared_origin and not hmac.compare_digest(origin, declared_origin)) or not allowed_origin or not hmac.compare_digest(request_origin, allowed_origin):
-            print(f"Rejected extension origin: received={request_origin or '<missing>'!r} expected={allowed_origin or '<missing>'!r}", file=sys.stderr, flush=True)
             return await error(403, "origin_rejected", "Extension origin is not allowed.")(scope, receive, send)
         try:
             content_length = int(headers.get("content-length", "0") or 0)
