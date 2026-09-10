@@ -2,6 +2,26 @@
 
 Capture a rendered Medium or Towards Data Science article, preserve its text, formulas, and editorial images, and turn it into a Kindle-ready EPUB.
 
+## Estrutura
+
+CLI, backend local e extensão web são partes separadas:
+
+```text
+article_to_kindle.py       # launcher da CLI
+cli/main.py                # comandos CLI e --serve
+backend/api.py             # API FastAPI autenticada
+backend/extractor.py       # captura, sanitização, MathML e imagens
+backend/epub.py            # pacote EPUB
+backend/delivery.py        # adaptador SMTP
+backend/config.py          # ambiente e limites
+backend/models.py          # Article e ImageAsset
+web_extension/             # extensão Chrome MV3
+  popup.*                  # ações Download EPUB/Send to Kindle
+  content.js               # captura DOM renderizado
+  service-worker.js        # injeta captura após clique
+  options.*                # URL e token locais
+```
+
 ## Install
 
 ```bash
@@ -11,7 +31,7 @@ python3 -m venv .venv
 
 ## Chrome extension and local server
 
-1. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the `extension/` directory.
+1. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the `web_extension/` directory.
 2. Open the extension settings and copy the displayed `chrome-extension://...` origin.
 3. Export the settings below. Use `.env.example` as a template; the application does not load `.env` files automatically.
 

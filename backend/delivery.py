@@ -1,4 +1,4 @@
-"""Email delivery of generated EPUB files."""
+"""SMTP delivery adapter."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import ssl
 from email.message import EmailMessage
 from pathlib import Path
 
-from config import KINDLE_EMAIL, SMTP_FROM, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT, SMTP_USERNAME, smtp_settings
-from errors import ArticleError
+from .config import KINDLE_EMAIL, SMTP_FROM, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT, SMTP_USERNAME, smtp_settings
+from .errors import ArticleError
 
 
 def send_to_kindle(article, epub: Path) -> None:
@@ -17,14 +17,10 @@ def send_to_kindle(article, epub: Path) -> None:
         port = int(settings[SMTP_PORT])
     except (ValueError, TypeError) as error:
         raise ArticleError(str(error)) from error
-
     message = EmailMessage()
-    message["From"] = settings[SMTP_FROM]
-    message["To"] = settings[KINDLE_EMAIL]
-    message["Subject"] = article.title
+    message["From"], message["To"], message["Subject"] = settings[SMTP_FROM], settings[KINDLE_EMAIL], article.title
     message.set_content(f"{article.title}\n\nSource: {article.source_url}")
     message.add_attachment(epub.read_bytes(), maintype="application", subtype="epub+zip", filename=epub.name)
-
     try:
         context = ssl.create_default_context()
         if port == 465:

@@ -5,6 +5,9 @@ outputs/
 docs/agents
 *$py.class
 AGENTS.md
+CONTEXT.md
+docs/
+tests/
 # C extensions
 *.so
 

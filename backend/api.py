@@ -6,15 +6,15 @@ import tempfile
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from article_to_kindle import extract_article, require_article_url, slugify
-from config import ALLOWED_ORIGIN, API_TOKEN, MAX_CAPTURE_BYTES, MAX_EPUB_BYTES
-from delivery import send_to_kindle
-from epub_writer import write_epub
-from errors import ArticleError
+from .config import ALLOWED_ORIGIN, API_TOKEN, MAX_CAPTURE_BYTES, MAX_EPUB_BYTES
+from .delivery import send_to_kindle
+from .epub import write_epub
+from .errors import ArticleError
+from .extractor import extract_article, require_article_url, slugify
 
 
 def error(status: int, code: str, message: str) -> JSONResponse:
@@ -48,17 +48,11 @@ class OriginMiddleware:
             if message["type"] == "http.response.start":
                 message["headers"].extend((key.encode(), value.encode()) for key, value in self.headers(origin).items())
             await send(message)
-
         await self.app(scope, receive, send_with_cors)
 
     @staticmethod
     def headers(origin):
-        return {
-            "Access-Control-Allow-Origin": origin,
-            "Access-Control-Allow-Headers": "Authorization, Content-Type",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Expose-Headers": "X-Article-Warnings",
-        }
+        return {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Expose-Headers": "X-Article-Warnings"}
 
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -67,10 +61,7 @@ app.add_middleware(OriginMiddleware)
 
 @app.exception_handler(HTTPException)
 async def http_error(_request: Request, exception: HTTPException):
-    code = {
-        400: "invalid_capture", 401: "invalid_token", 413: "size_limit",
-        422: "conversion_failed", 502: "smtp_failed",
-    }.get(exception.status_code, "request_failed")
+    code = {400: "invalid_capture", 401: "invalid_token", 413: "size_limit", 422: "conversion_failed", 502: "smtp_failed"}.get(exception.status_code, "request_failed")
     return error(exception.status_code, code, str(exception.detail))
 
 
@@ -105,8 +96,7 @@ def captured_article(capture: ArticleCapture):
         article = extract_article(capture.html, capture.sourceUrl)
     except ArticleError as exception:
         raise HTTPException(400, detail=str(exception)) from exception
-    article.title = capture.title.strip()
-    article.author = capture.author.strip()
+    article.title, article.author = capture.title.strip(), capture.author.strip()
     return article
 
 
@@ -123,7 +113,7 @@ def write_article_epub(article, output: Path) -> None:
 
 @app.post("/epub", dependencies=[Depends(authenticate)])
 async def create_epub(capture: ArticleCapture):
-    # ponytail: blocking work is fine for one local user; use workers if concurrent requests matter.
+    # ponytail: blocking work is fine for one local user; use workers if concurrency matters.
     article = captured_article(capture)
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory) / "article.epub"
@@ -131,11 +121,7 @@ async def create_epub(capture: ArticleCapture):
         if output.stat().st_size > MAX_EPUB_BYTES:
             raise HTTPException(413, detail="Generated EPUB exceeds 50 MiB.")
         content = output.read_bytes()
-    return Response(
-        content,
-        media_type="application/epub+zip",
-        headers={"Content-Disposition": f'attachment; filename="{slugify(article.title)}.epub"', **warning_headers(article)},
-    )
+    return Response(content, media_type="application/epub+zip", headers={"Content-Disposition": f'attachment; filename="{slugify(article.title)}.epub"', **warning_headers(article)})
 
 
 @app.post("/kindle", dependencies=[Depends(authenticate)])
@@ -150,7 +136,4 @@ async def submit_to_kindle(capture: ArticleCapture):
             send_to_kindle(article, output)
         except ArticleError as exception:
             raise HTTPException(502, detail="Kindle submission failed.") from exception
-    return {
-        "message": "Sent to Kindle email; Amazon delivery is pending.",
-        "warnings": article.warnings,
-    }
+    return {"message": "Sent to Kindle email; Amazon delivery is pending.", "warnings": article.warnings}

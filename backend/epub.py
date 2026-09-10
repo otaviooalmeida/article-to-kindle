@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 
+from .models import Article
 
 CSS = """
 body { font-family: serif; line-height: 1.5; margin: 5%; }
@@ -23,38 +24,31 @@ math { font-size: 1.05em; } math[display="block"] { display: block; margin: 1em 
 """.strip()
 
 
-def epub_xhtml(article) -> str:
+def epub_xhtml(article: Article) -> str:
     return f'''<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>{escape(article.title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
 <body><article><h1>{escape(article.title)}</h1><p class="byline">{escape(article.author)}</p><p class="source">Source: <a href="{escape(article.source_url, quote=True)}">{escape(article.source_url)}</a></p>{article.content_html}</article></body></html>'''
 
 
-def nav_xhtml(article) -> str:
+def nav_xhtml(article: Article) -> str:
     items = "".join(f'<li><a href="article.xhtml#{escape(item_id)}">{escape(text)}</a></li>' for item_id, text in article.headings)
     return f'''<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>Contents</title></head><body><nav epub:type="toc" id="toc" xmlns:epub="http://www.idpf.org/2007/ops"><h1>Contents</h1><ol><li><a href="article.xhtml">{escape(article.title)}</a></li>{items}</ol></nav></body></html>'''
 
 
-def write_epub(article, destination: Path) -> None:
+def write_epub(article: Article, destination: Path) -> None:
     identifier = uuid.uuid5(uuid.NAMESPACE_URL, article.source_url)
     image_manifest = "".join(
         f'<item id="image-{index}" href="{escape(asset.href, quote=True)}" media-type="{escape(asset.media_type, quote=True)}"/>'
         for index, asset in enumerate(article.images, start=1)
     )
-    manifest = (
-        '<item id="article" href="article.xhtml" media-type="application/xhtml+xml"/>'
-        '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
-        '<item id="css" href="style.css" media-type="text/css"/>'
-        f"{image_manifest}"
-    )
+    manifest = '<item id="article" href="article.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="css" href="style.css" media-type="text/css"/>' + image_manifest
     opf = f'''<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="book-id" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="book-id">urn:uuid:{identifier}</dc:identifier><dc:title>{escape(article.title)}</dc:title><dc:creator>{escape(article.author)}</dc:creator><dc:language>en</dc:language><dc:source>{escape(article.source_url)}</dc:source><meta property="dcterms:modified">{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}</meta></metadata><manifest>{manifest}</manifest><spine><itemref idref="article"/></spine></package>'''
-    container = '''<?xml version="1.0" encoding="UTF-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'''
-
-    temporary: Path | None = None
+    container = '''<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'''
+    temporary = None
     try:
         with tempfile.NamedTemporaryFile(dir=destination.parent, suffix=".epub", delete=False) as handle:
             temporary = Path(handle.name)
