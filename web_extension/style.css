@@ -1,0 +1,13 @@
+:root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
+body { margin: 0; min-width: 320px; }
+main { padding: 16px; }
+h1 { font-size: 18px; margin: 0 0 12px; }
+#title { font-weight: 600; }
+#status { min-height: 2.5em; }
+.actions { display: flex; gap: 8px; }
+button { cursor: pointer; padding: 8px 10px; }
+button:disabled { cursor: default; opacity: .55; }
+.link { background: none; border: 0; padding-left: 0; text-decoration: underline; }
+label { display: block; margin: 12px 0; }
+input { box-sizing: border-box; display: block; margin-top: 4px; padding: 7px; width: 100%; }
+code { user-select: all; }

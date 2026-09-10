@@ -1,35 +1,78 @@
 # Article to Kindle
 
-Turn a public Medium or Towards Data Science article into a Kindle-ready EPUB.
+Capture a rendered Medium or Towards Data Science article, preserve its text, formulas, and editorial images, and turn it into a Kindle-ready EPUB.
 
-```bash
-cd /home/otavio/article-to-kindle
-./article_to_kindle.py 'https://medium.com/@user/article-slug' --output article.epub
+## Estrutura
+
+CLI, backend local e extensão web são partes separadas:
+
+```text
+article_to_kindle.py       # launcher da CLI
+cli/main.py                # comandos CLI e --serve
+backend/api.py             # API FastAPI autenticada
+backend/extractor.py       # captura, sanitização, MathML e imagens
+backend/epub.py            # pacote EPUB
+backend/delivery.py        # adaptador SMTP
+backend/config.py          # ambiente e limites
+backend/models.py          # Article e ImageAsset
+web_extension/             # extensão Chrome MV3
+  popup.*                  # ações Download EPUB/Send to Kindle
+  content.js               # captura DOM renderizado
+  service-worker.js        # injeta captura após clique
+  options.*                # URL e token locais
 ```
 
-`beautifulsoup4` is the only non-standard dependency:
+## Install
 
 ```bash
-python3 -m pip install beautifulsoup4
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
-Run the local check without making a network request:
+## Chrome extension and local server
+
+1. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the `web_extension/` directory.
+2. Open the extension settings and copy the displayed `chrome-extension://...` origin.
+3. Export the settings below. Use `.env.example` as a template; the application does not load `.env` files automatically.
 
 ```bash
-./article_to_kindle.py --self-test
-```
-
-To email the generated EPUB to Kindle, configure an approved sender and run with `--send`:
-
-```bash
+export ARTICLE_TO_KINDLE_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export ARTICLE_TO_KINDLE_ALLOWED_ORIGIN='chrome-extension://your-extension-id'
 export KINDLE_EMAIL='your-kindle-address@example.com'
 export SMTP_HOST='smtp.example.com'
 export SMTP_PORT='587'
 export SMTP_USERNAME='your-email@example.com'
 export SMTP_PASSWORD='app-password'
 export SMTP_FROM='your-email@example.com'
-
-./article_to_kindle.py 'https://towardsdatascience.com/article-slug' --send
 ```
 
-The command writes the EPUB locally before attempting delivery. `--dry-run` explicitly creates the EPUB without email. Public pages only; it does not bypass paywalls or run a browser.
+4. Put the same token in the extension settings and save.
+5. Start the local server and leave it running:
+
+```bash
+.venv/bin/python article_to_kindle.py --serve
+```
+
+6. Visit a supported article and open the extension. Choose **Download EPUB** or **Send to Kindle**.
+
+The server listens only on `127.0.0.1:8765`. SMTP acceptance is a Kindle Submission, not proof that Amazon has added the document to the Kindle library. Email EPUBs are limited to 50 MiB.
+
+## CLI
+
+```bash
+.venv/bin/python article_to_kindle.py 'https://medium.com/@user/article-slug'
+```
+
+Without `--output`, the EPUB is saved under `outputs/`. Use `--output article.epub` for another path, or `--send` to submit it through SMTP.
+
+## Checks
+
+```bash
+.venv/bin/python article_to_kindle.py --self-test
+.venv/bin/python -m unittest -v tests.test_api
+.venv/bin/python -m unittest -v tests.test_extension
+```
+
+The extension fixture check needs Chrome or Chromium. Before using the MVP, manually smoke-test download and Kindle Submission once on Medium and once on Towards Data Science.
+
+Public pages and content already present in the rendered DOM only; the extension does not bypass paywalls or transfer browser cookies.

@@ -1,8 +1,13 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
+outputs/
+docs/agents
 *$py.class
-
+AGENTS.md
+CONTEXT.md
+docs/
+tests/
 # C extensions
 *.so
 

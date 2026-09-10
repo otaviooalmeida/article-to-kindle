@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Article to Kindle",
+  "version": "0.1.0",
+  "description": "Capture a rendered article and send it to the local Article to Kindle server.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1:8765/*"],
+  "background": { "service_worker": "service-worker.js" },
+  "action": { "default_popup": "popup.html" },
+  "options_page": "options.html"
+}
