@@ -2,6 +2,7 @@
 
 import hmac
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -30,8 +31,11 @@ class OriginMiddleware:
             return await self.app(scope, receive, send)
         headers = {key.decode(): value.decode() for key, value in scope["headers"]}
         origin = headers.get("origin", "")
+        declared_origin = headers.get("x-article-to-kindle-origin", "")
+        request_origin = origin or declared_origin
         allowed_origin = os.environ.get(ALLOWED_ORIGIN, "")
-        if not allowed_origin or not hmac.compare_digest(origin, allowed_origin):
+        if (origin and declared_origin and not hmac.compare_digest(origin, declared_origin)) or not allowed_origin or not hmac.compare_digest(request_origin, allowed_origin):
+            print(f"Rejected extension origin: received={request_origin or '<missing>'!r} expected={allowed_origin or '<missing>'!r}", file=sys.stderr, flush=True)
             return await error(403, "origin_rejected", "Extension origin is not allowed.")(scope, receive, send)
         try:
             content_length = int(headers.get("content-length", "0") or 0)
@@ -39,20 +43,20 @@ class OriginMiddleware:
             return await error(400, "invalid_capture", "Invalid Content-Length header.")(scope, receive, send)
         if content_length > MAX_CAPTURE_BYTES + 65536:
             response = error(413, "size_limit", "Article capture exceeds 10 MiB.")
-            response.headers.update(self.headers(origin))
+            response.headers.update(self.headers(request_origin))
             return await response(scope, receive, send)
         if scope["method"] == "OPTIONS":
-            return await Response(status_code=204, headers=self.headers(origin))(scope, receive, send)
+            return await Response(status_code=204, headers=self.headers(request_origin))(scope, receive, send)
 
         async def send_with_cors(message):
             if message["type"] == "http.response.start":
-                message["headers"].extend((key.encode(), value.encode()) for key, value in self.headers(origin).items())
+                message["headers"].extend((key.encode(), value.encode()) for key, value in self.headers(request_origin).items())
             await send(message)
         await self.app(scope, receive, send_with_cors)
 
     @staticmethod
     def headers(origin):
-        return {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Expose-Headers": "X-Article-Warnings"}
+        return {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Article-To-Kindle-Origin", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Expose-Headers": "X-Article-Warnings"}
 
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -113,7 +117,6 @@ def write_article_epub(article, output: Path) -> None:
 
 @app.post("/epub", dependencies=[Depends(authenticate)])
 async def create_epub(capture: ArticleCapture):
-    # ponytail: blocking work is fine for one local user; use workers if concurrency matters.
     article = captured_article(capture)
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory) / "article.epub"

@@ -12,12 +12,20 @@ async function settings() {
   return chrome.storage.local.get({ serverUrl: "http://127.0.0.1:8765", token: "" });
 }
 
+function extensionOrigin() {
+  return new URL(chrome.runtime.getURL("/")).origin;
+}
+
 async function call(path) {
   const { serverUrl, token } = await settings();
   if (!token) throw new Error("Configure the bearer token in Settings.");
   const response = await fetch(`${serverUrl}${path}`, {
     method: "POST",
-    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "X-Article-To-Kindle-Origin": extensionOrigin(),
+    },
     body: JSON.stringify(capture),
   });
   if (!response.ok) {
@@ -31,7 +39,12 @@ async function checkServer() {
   const { serverUrl, token } = await settings();
   if (!token) throw new Error("Configure the bearer token in Settings.");
   try {
-    const response = await fetch(`${serverUrl}/health`, { headers: { "Authorization": `Bearer ${token}` } });
+    const response = await fetch(`${serverUrl}/health`, {
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "X-Article-To-Kindle-Origin": extensionOrigin(),
+      },
+    });
     if (response.ok) return;
     const failure = await response.json().catch(() => ({}));
     throw new Error(failure.message || `Local server rejected the request (${response.status}).`);
