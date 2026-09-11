@@ -130,6 +130,33 @@ CONTENT_SELECTORS = (
     "article", "[itemprop='articleBody']", "[role='main']", "main",
     ".article-body", ".article-content", ".post-content", ".entry-content",
 )
+END_MARKER_SELECTOR = (
+    "[class*='related'], [id*='related'], [class*='recommended'], [id*='recommended'], "
+    "[class*='read-next'], [id*='read-next'], [class*='readnext'], [id*='readnext'], "
+    "[class*='comment'], [id*='comment'], [class*='tag-list'], [id*='tag-list']"
+)
+END_MARKER_HEADINGS = {
+    "related", "related articles", "recommended", "recommended articles", "read next",
+    "you may also like", "more from", "comments", "leave a comment", "tags", "subscribe",
+}
+
+
+def trim_article_end(root: Tag) -> None:
+    """Cut the first rendered post-article section and everything after it."""
+    candidates = list(root.select(END_MARKER_SELECTOR))
+    candidates.extend(
+        tag for tag in root.find_all(["h2", "h3", "h4"])
+        if clean_text(tag.get_text(" ", strip=True)).casefold() in END_MARKER_HEADINGS
+    )
+    if not candidates:
+        return
+    marker = next(tag for tag in root.find_all(True) if tag in candidates)
+    parent = marker.parent
+    if not isinstance(parent, Tag):
+        marker.decompose()
+        return
+    for node in [marker, *marker.find_next_siblings()]:
+        node.decompose()
 
 
 def _content_score(root: Tag) -> int:
@@ -308,6 +335,7 @@ def extract_article(page_html: str, source_url: str) -> Article:
     if not title:
         raise ArticleError("Could not find an article title.")
     author = json_author or clean_text(first_meta(soup, "author", "article:author")) or "Unknown author"
+    trim_article_end(root)
     warnings = extract_math(root)
     remove_noise(root, author)
     sanitize_article(root, source_url)
