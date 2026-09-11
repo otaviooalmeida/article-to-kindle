@@ -21,16 +21,22 @@ def send_to_kindle(article, epub: Path) -> None:
     message["From"], message["To"], message["Subject"] = settings[SMTP_FROM], settings[KINDLE_EMAIL], article.title
     message.set_content(f"{article.title}\n\nSource: {article.source_url}")
     message.add_attachment(epub.read_bytes(), maintype="application", subtype="epub+zip", filename=epub.name)
+    client = None
     try:
         context = ssl.create_default_context()
         if port == 465:
-            with smtplib.SMTP_SSL(settings[SMTP_HOST], port, context=context, timeout=30) as client:
-                client.login(settings[SMTP_USERNAME], settings[SMTP_PASSWORD])
-                client.send_message(message)
+            client = smtplib.SMTP_SSL(settings[SMTP_HOST], port, context=context, timeout=30)
+            client.login(settings[SMTP_USERNAME], settings[SMTP_PASSWORD])
         else:
-            with smtplib.SMTP(settings[SMTP_HOST], port, timeout=30) as client:
-                client.starttls(context=context)
-                client.login(settings[SMTP_USERNAME], settings[SMTP_PASSWORD])
-                client.send_message(message)
+            client = smtplib.SMTP(settings[SMTP_HOST], port, timeout=30)
+            client.starttls(context=context)
+            client.login(settings[SMTP_USERNAME], settings[SMTP_PASSWORD])
+        client.send_message(message)
     except (OSError, smtplib.SMTPException) as error:
         raise ArticleError(f"EPUB was created but email delivery failed: {error}") from error
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except OSError:
+                pass
