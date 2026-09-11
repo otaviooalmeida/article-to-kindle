@@ -156,11 +156,18 @@ def make_absolute(url: str, base_url: str) -> str | None:
     return absolute if urlparse(absolute).scheme in {"http", "https"} else None
 
 
-def remove_noise(root: Tag) -> None:
+def remove_noise(root: Tag, author: str) -> None:
     for comment in root.find_all(string=lambda value: isinstance(value, Comment)):
         comment.extract()
-    for tag in root.select("script, style, noscript, svg, iframe, form, button, nav, footer, aside, [class*='recommend'], [id*='recommend'], [data-testid*='recommend']"):
+    for tag in root.select("script, style, noscript, svg, iframe, form, button, nav, footer, aside, [class*='recommend'], [id*='recommend'], [data-testid*='recommend'], time, [class*='byline'], [id*='byline'], [class*='author'], [id*='author'], [class*='published'], [id*='published'], [class*='reading-time'], [id*='reading-time'], [class*='read-time'], [id*='read-time']"):
         tag.decompose()
+    author = clean_text(author).casefold()
+    for tag in list(root.find_all(["p", "div", "span", "header"])):
+        if not tag.find("a"):
+            continue
+        text = clean_text(tag.get_text(" ", strip=True)).casefold()
+        if text in {author, f"by {author}", f"written by {author}", f"por {author}"}:
+            tag.decompose()
 
 
 def latex_to_mathml(latex: str, display: bool = False) -> str:
@@ -205,6 +212,24 @@ def extract_math(root: Tag) -> list[str]:
         fragment.append(str(text_node)[last:])
         text_node.replace_with(*list(fragment.contents))
     return [f"{failed} formula(s) retained as text"] if failed else []
+
+
+def deduplicate_content(root: Tag, title: str) -> None:
+    """Remove repeated rendered blocks, including the title copied into the body."""
+    seen: set[tuple[str, str]] = set()
+    block_tags = ["h1", "h2", "h3", "h4", "p", "blockquote", "pre", "li", "figcaption"]
+    for tag in list(root.find_all(block_tags)):
+        text = clean_text(tag.get_text(" ", strip=True))
+        if tag.name == "h1" and text == clean_text(title):
+            tag.decompose()
+            continue
+        if not text:
+            continue
+        key = (tag.name, text)
+        if key in seen:
+            tag.decompose()
+        else:
+            seen.add(key)
 
 
 def sanitize_article(root: Tag, base_url: str) -> None:
@@ -284,8 +309,9 @@ def extract_article(page_html: str, source_url: str) -> Article:
         raise ArticleError("Could not find an article title.")
     author = json_author or clean_text(first_meta(soup, "author", "article:author")) or "Unknown author"
     warnings = extract_math(root)
-    remove_noise(root)
+    remove_noise(root, author)
     sanitize_article(root, source_url)
+    deduplicate_content(root, title)
     if len(clean_text(root.get_text(" ", strip=True))) < 100:
         raise ArticleError("Could not find enough readable article content (it may be paywalled).")
     headings = []
