@@ -14,6 +14,7 @@ from .models import Article
 CSS = """
 body { font-family: serif; line-height: 1.5; margin: 5%; }
 h1, h2, h3, h4 { line-height: 1.2; margin-top: 1.5em; }
+h1.title { font-size: 1.6em; }
 .byline, .source { color: #555; font-size: 0.9em; }
 pre { background: #f4f4f4; padding: 0.8em; white-space: pre-wrap; font-family: monospace; }
 code { font-family: monospace; }
@@ -28,7 +29,7 @@ def epub_xhtml(article: Article) -> str:
     return f'''<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>{escape(article.title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
-<body><article><h1>{escape(article.title)}</h1><p class="byline">{escape(article.author)}</p><p class="source">Source: <a href="{escape(article.source_url, quote=True)}">{escape(article.source_url)}</a></p>{article.content_html}</article></body></html>'''
+<body><article><h1 class="title">{escape(article.title)}</h1><p class="byline">{escape(article.author)}</p>{article.content_html}<p class="source">Source: <a href="{escape(article.source_url, quote=True)}">{escape(article.source_url)}</a></p></article></body></html>'''
 
 
 def nav_xhtml(article: Article) -> str:
