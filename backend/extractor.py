@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from io import BytesIO
 import mimetypes
 import re
 from html import escape
@@ -13,6 +14,7 @@ from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup, Comment, Tag
 from latex2mathml.converter import convert as latex_to_mathml_markup
+from PIL import Image
 
 from .config import MAX_CAPTURE_BYTES
 from .errors import ArticleError
@@ -224,6 +226,23 @@ def sanitize_article(root: Tag, base_url: str) -> None:
             tag.attrs = {key: value for key, value in tag.attrs.items() if tag.name == "math" and key in {"xmlns", "display"}}
 
 
+def normalize_image(data: bytes, media_type: str) -> tuple[bytes, str, str]:
+    """Convert formats with weak Kindle support to a broadly supported JPEG."""
+    if media_type != "image/webp":
+        return data, media_type, IMAGE_EXTENSIONS[media_type]
+    with Image.open(BytesIO(data)) as image:
+        if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+            rgba = image.convert("RGBA")
+            background = Image.new("RGB", rgba.size, "white")
+            background.paste(rgba, mask=rgba.getchannel("A"))
+            image = background
+        else:
+            image = image.convert("RGB")
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=90, optimize=True)
+    return output.getvalue(), "image/jpeg", ".jpg"
+
+
 def download_images(root: Tag) -> tuple[list[ImageAsset], int]:
     assets, fetched, failed, total_bytes = [], {}, 0, 0
     for tag in list(root.find_all("img")):
@@ -240,9 +259,11 @@ def download_images(root: Tag) -> tuple[list[ImageAsset], int]:
                 data, media_type, final_url = read_url(source, MAX_IMAGE_BYTES, "image/")
                 if urlparse(final_url).scheme not in {"http", "https"}:
                     raise ArticleError("Image redirected to an unsupported URL.")
-            if media_type not in IMAGE_EXTENSIONS or total_bytes + len(data) > MAX_TOTAL_IMAGE_BYTES:
-                raise ArticleError("Unsupported image type or article image limit exceeded.")
-            extension = IMAGE_EXTENSIONS[media_type] or mimetypes.guess_extension(media_type) or ".img"
+            if media_type not in IMAGE_EXTENSIONS:
+                raise ArticleError("Unsupported image type.")
+            data, media_type, extension = normalize_image(data, media_type)
+            if len(data) > MAX_IMAGE_BYTES or total_bytes + len(data) > MAX_TOTAL_IMAGE_BYTES:
+                raise ArticleError("Article image limit exceeded.")
             asset = ImageAsset(f"images/image-{len(assets) + 1}{extension}", data, media_type)
             assets.append(asset)
             total_bytes += len(data)

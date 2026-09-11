@@ -2,3 +2,4 @@ beautifulsoup4==4.13.4
 fastapi==0.115.12
 latex2mathml==3.81.1
 uvicorn==0.34.2
+Pillow==11.2.1
