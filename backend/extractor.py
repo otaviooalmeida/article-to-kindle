@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import json
+from io import BytesIO
 import mimetypes
 import re
 from html import escape
@@ -12,6 +14,7 @@ from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup, Comment, Tag
 from latex2mathml.converter import convert as latex_to_mathml_markup
+from PIL import Image
 
 from .config import MAX_CAPTURE_BYTES
 from .errors import ArticleError
@@ -22,7 +25,12 @@ USER_AGENT = "article-to-kindle/0.1 (+https://github.com/)"
 MAX_HTML_BYTES = MAX_CAPTURE_BYTES
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_TOTAL_IMAGE_BYTES = 50 * 1024 * 1024
-ALLOWED_HOSTS = ("medium.com", "towardsdatascience.com")
+ALLOWED_HOSTS = (
+    "medium.com", "towardsdatascience.com", "substack.com", "dev.to", "hashnode.dev",
+    "kdnuggets.com", "analyticsvidhya.com", "machinelearningmastery.com", "thegradient.pub",
+    "paperswithcode.com", "huggingface.co", "deeplearning.ai", "research.googleblog.com",
+    "microsoft.com", "ai.meta.com", "openai.com",
+)
 ALLOWED_TAGS = {
     "a", "b", "blockquote", "br", "code", "em", "figcaption", "figure", "h1",
     "h2", "h3", "h4", "hr", "i", "img", "li", "ol", "p", "pre", "strong",
@@ -92,12 +100,56 @@ def clean_text(value: str | None) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
 
 
-def choose_article_root(soup: BeautifulSoup) -> Tag:
-    root = soup.select_one("article") or soup.select_one("[role=main]") or soup.find("main") or soup.body
-    if not isinstance(root, Tag):
-        raise ArticleError("The page has no readable article body.")
-    return root
+def json_ld_metadata(soup: BeautifulSoup) -> tuple[str, str]:
+    """Read common Article JSON-LD fields without trusting it as article content."""
+    for script in soup.select("script[type='application/ld+json']"):
+        try:
+            value = json.loads(script.string or script.get_text())
+        except (TypeError, ValueError):
+            continue
+        items = value if isinstance(value, list) else value.get("@graph", []) if isinstance(value, dict) else []
+        if isinstance(value, dict) and not items:
+            items = [value]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            types = item.get("@type", [])
+            types = types if isinstance(types, list) else [types]
+            if not any("Article" in str(item_type) for item_type in types):
+                continue
+            author = item.get("author", "")
+            if isinstance(author, list):
+                author = author[0] if author else ""
+            if isinstance(author, dict):
+                author = author.get("name", "")
+            return clean_text(str(item.get("headline") or item.get("name") or "")), clean_text(str(author))
+    return "", ""
 
+
+CONTENT_SELECTORS = (
+    "article", "[itemprop='articleBody']", "[role='main']", "main",
+    ".article-body", ".article-content", ".post-content", ".entry-content",
+)
+
+
+def _content_score(root: Tag) -> int:
+    text_length = len(clean_text(root.get_text(" ", strip=True)))
+    paragraphs = len(root.find_all("p"))
+    headings = len(root.find_all(["h1", "h2", "h3", "h4"]))
+    noise = len(root.select("nav, footer, aside, [class*='recommend'], [class*='newsletter'], [class*='subscribe']"))
+    return text_length + paragraphs * 80 + headings * 40 - noise * 250
+
+
+def choose_article_root(soup: BeautifulSoup) -> Tag:
+    candidates = []
+    for selector in CONTENT_SELECTORS:
+        candidates.extend(soup.select(selector))
+    candidates = list(dict.fromkeys(candidate for candidate in candidates if isinstance(candidate, Tag)))
+    if not candidates and isinstance(soup.body, Tag):
+        candidates = [soup.body]
+    if not candidates:
+        raise ArticleError("The page has no readable article body.")
+    return max(candidates, key=_content_score)
 
 def make_absolute(url: str, base_url: str) -> str | None:
     absolute = urljoin(base_url, url)
@@ -174,6 +226,23 @@ def sanitize_article(root: Tag, base_url: str) -> None:
             tag.attrs = {key: value for key, value in tag.attrs.items() if tag.name == "math" and key in {"xmlns", "display"}}
 
 
+def normalize_image(data: bytes, media_type: str) -> tuple[bytes, str, str]:
+    """Convert formats with weak Kindle support to a broadly supported JPEG."""
+    if media_type != "image/webp":
+        return data, media_type, IMAGE_EXTENSIONS[media_type]
+    with Image.open(BytesIO(data)) as image:
+        if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+            rgba = image.convert("RGBA")
+            background = Image.new("RGB", rgba.size, "white")
+            background.paste(rgba, mask=rgba.getchannel("A"))
+            image = background
+        else:
+            image = image.convert("RGB")
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=90, optimize=True)
+    return output.getvalue(), "image/jpeg", ".jpg"
+
+
 def download_images(root: Tag) -> tuple[list[ImageAsset], int]:
     assets, fetched, failed, total_bytes = [], {}, 0, 0
     for tag in list(root.find_all("img")):
@@ -186,15 +255,15 @@ def download_images(root: Tag) -> tuple[list[ImageAsset], int]:
                 header, encoded = source.split(",", 1)
                 media_type = header[5:].split(";", 1)[0]
                 data = base64.b64decode(encoded, validate=True) if ";base64" in header else unquote_to_bytes(encoded)
-                if len(data) > MAX_IMAGE_BYTES:
-                    raise ArticleError("Image is larger than the limit.")
             else:
                 data, media_type, final_url = read_url(source, MAX_IMAGE_BYTES, "image/")
                 if urlparse(final_url).scheme not in {"http", "https"}:
                     raise ArticleError("Image redirected to an unsupported URL.")
-            if media_type not in IMAGE_EXTENSIONS or total_bytes + len(data) > MAX_TOTAL_IMAGE_BYTES:
-                raise ArticleError("Unsupported image type or article image limit exceeded.")
-            extension = IMAGE_EXTENSIONS[media_type] or mimetypes.guess_extension(media_type) or ".img"
+            if media_type not in IMAGE_EXTENSIONS:
+                raise ArticleError("Unsupported image type.")
+            data, media_type, extension = normalize_image(data, media_type)
+            if len(data) > MAX_IMAGE_BYTES or total_bytes + len(data) > MAX_TOTAL_IMAGE_BYTES:
+                raise ArticleError("Article image limit exceeded.")
             asset = ImageAsset(f"images/image-{len(assets) + 1}{extension}", data, media_type)
             assets.append(asset)
             total_bytes += len(data)
@@ -209,10 +278,11 @@ def download_images(root: Tag) -> tuple[list[ImageAsset], int]:
 def extract_article(page_html: str, source_url: str) -> Article:
     soup = BeautifulSoup(page_html, "html.parser")
     root = choose_article_root(soup)
-    title = clean_text(first_meta(soup, "og:title", "twitter:title")) or clean_text(root.find("h1").get_text(" ", strip=True) if root.find("h1") else "") or clean_text(soup.title.get_text(" ", strip=True) if soup.title else "")
+    json_title, json_author = json_ld_metadata(soup)
+    title = json_title or clean_text(first_meta(soup, "og:title", "twitter:title")) or clean_text(root.find("h1").get_text(" ", strip=True) if root.find("h1") else "") or clean_text(soup.title.get_text(" ", strip=True) if soup.title else "")
     if not title:
         raise ArticleError("Could not find an article title.")
-    author = clean_text(first_meta(soup, "author", "article:author")) or "Unknown author"
+    author = json_author or clean_text(first_meta(soup, "author", "article:author")) or "Unknown author"
     warnings = extract_math(root)
     remove_noise(root)
     sanitize_article(root, source_url)
