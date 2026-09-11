@@ -6,6 +6,8 @@
     "microsoft.com", "ai.meta.com", "openai.com",
   ];
   const NOISE = "nav,footer,aside,form,button,[role=dialog],[class*='recommend'],[id*='recommend'],[data-testid*='recommend'],[class*='paywall'],[class*='newsletter']";
+  const END_MARKERS = "[class*='related'],[id*='related'],[class*='recommended'],[id*='recommended'],[class*='read-next'],[id*='read-next'],[class*='readnext'],[id*='readnext'],[class*='comment'],[id*='comment'],[class*='tag-list'],[id*='tag-list']";
+  const END_HEADINGS = new Set(["related", "related articles", "recommended", "recommended articles", "read next", "you may also like", "more from", "comments", "leave a comment", "tags", "subscribe"]);
   const DECORATIVE = /avatar|logo|icon|profile|author|tracking|pixel/i;
 
   const CONTENT_SELECTORS = [
@@ -26,6 +28,14 @@
     return candidates.sort((left, right) => scoreContent(right) - scoreContent(left))[0] || null;
   }
 
+  function trimArticleEnd(root) {
+    const candidates = [...root.querySelectorAll(END_MARKERS)];
+    candidates.push(...[...root.querySelectorAll("h2,h3,h4")].filter(heading => END_HEADINGS.has(heading.textContent.trim().replace(/\s+/g, " ").toLowerCase())));
+    const marker = [...root.querySelectorAll("*")].find(node => candidates.includes(node));
+    if (!marker) return;
+    [...marker.parentElement.children].slice([...marker.parentElement.children].indexOf(marker)).forEach(node => node.remove());
+  }
+
   function captureArticle(doc = document, pageUrl = location.href) {
     const url = new URL(pageUrl);
     if (!SUPPORTED_HOSTS.some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) {
@@ -35,9 +45,10 @@
     if (!root) throw new Error("Article content not detected.");
 
     const clone = root.cloneNode(true);
-    const sourceImages = [...root.querySelectorAll("img")];
+    trimArticleEnd(clone);
+    const sourceImages = [...clone.querySelectorAll("img")];
     [...clone.querySelectorAll("img")].forEach((image, index) => {
-      const source = sourceImages[index];
+      const source = root.querySelectorAll("img")[index];
       const label = `${source.alt} ${source.className}`;
       const trackingPixel = source.naturalWidth > 0 && source.naturalWidth <= 2 && source.naturalHeight > 0 && source.naturalHeight <= 2;
       const meaningful = !DECORATIVE.test(label) && !trackingPixel;
