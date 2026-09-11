@@ -236,8 +236,6 @@ def download_images(root: Tag) -> tuple[list[ImageAsset], int]:
                 header, encoded = source.split(",", 1)
                 media_type = header[5:].split(";", 1)[0]
                 data = base64.b64decode(encoded, validate=True) if ";base64" in header else unquote_to_bytes(encoded)
-                if len(data) > MAX_IMAGE_BYTES:
-                    raise ArticleError("Image is larger than the limit.")
             else:
                 data, media_type, final_url = read_url(source, MAX_IMAGE_BYTES, "image/")
                 if urlparse(final_url).scheme not in {"http", "https"}:
