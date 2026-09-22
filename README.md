@@ -2,9 +2,7 @@
 
 Capture a rendered Medium or Towards Data Science article, preserve its text, formulas, and editorial images, and turn it into a Kindle-ready EPUB.
 
-## Estrutura
-
-CLI, backend local e extensão web são partes separadas:
+## Structure
 
 ```text
 article_to_kindle.py       # launcher da CLI
