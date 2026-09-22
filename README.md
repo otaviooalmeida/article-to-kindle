@@ -1,6 +1,6 @@
 # Article to Kindle
 
-Capture a rendered Medium or Towards Data Science article, preserve its text, formulas, and editorial images, and turn it into a Kindle-ready EPUB.
+Capture a rendered webpage article (such as Medium and TowardsDataScience), preserve its text, formulas, and editorial images, and turn it into a Kindle-ready EPUB.
 
 ## Structure
 
