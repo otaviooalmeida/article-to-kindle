@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+  <script src="capture-store.js" defer></script>
+  <script src="preview-core.js" defer></script>
+  <script src="preview.js" defer></script>
+</head>
+<body class="preview-page">
+  <header class="preview-header">
+    <div>
+      <h1>Preview Reading Copy</h1>
+      <p id="source" class="source-url"></p>
+    </div>
+    <button id="options" class="link">Settings</button>
+  </header>
+  <main class="preview-main">
+    <p id="status" role="status" aria-live="polite">Loading article preview…</p>
+    <fieldset id="editor" hidden>
+      <legend class="visually-hidden">Choose what to include in the Reading Copy</legend>
+      <div class="metadata-fields">
+        <label>Title<input id="title" type="text" required></label>
+        <label>Author<input id="author" type="text"></label>
+      </div>
+      <label class="option-row">
+        <input id="ignore-images" type="checkbox">
+        <span>Ignore images</span>
+      </label>
+      <p id="image-summary" class="help-text"></p>
+      <div class="selection-toolbar">
+        <label class="option-row">
+          <input id="select-all" type="checkbox" checked>
+          <span>Select all content blocks</span>
+        </label>
+        <span id="selection-count" class="help-text"></span>
+      </div>
+      <p class="help-text">Uncheck blocks to leave them out. You can edit text directly in the preview. Image thumbnails are not loaded here; included images are added when you create the Reading Copy.</p>
+      <div id="content" class="preview-content"></div>
+    </fieldset>
+    <div class="preview-actions">
+      <button id="download" disabled>Download EPUB</button>
+      <button id="send" disabled>Send to Kindle</button>
+    </div>
+  </main>
+</body>
+</html>

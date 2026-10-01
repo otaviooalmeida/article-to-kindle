@@ -56,7 +56,8 @@
         (image.closest("picture") || image).remove();
         return;
       }
-      image.src = source.currentSrc || source.src;
+      image.setAttribute("data-article-to-kindle-src", source.currentSrc || source.src);
+      image.removeAttribute("src");
       image.removeAttribute("srcset");
       image.removeAttribute("data-src");
       image.removeAttribute("data-srcset");

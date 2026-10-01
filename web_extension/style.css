@@ -11,3 +11,37 @@ button:disabled { cursor: default; opacity: .55; }
 label { display: block; margin: 12px 0; }
 input { box-sizing: border-box; display: block; margin-top: 4px; padding: 7px; width: 100%; }
 code { user-select: all; }
+
+.preview-page { min-width: 0; color-scheme: light dark; }
+.preview-header { align-items: center; border-bottom: 1px solid #8885; display: flex; gap: 24px; justify-content: space-between; padding: 18px max(20px, calc((100vw - 960px) / 2)); }
+.preview-header h1 { font-size: 22px; margin: 0 0 6px; }
+.preview-header .link { flex: 0 0 auto; padding: 6px; }
+.source-url { color: #777; font-size: 13px; margin: 0; overflow-wrap: anywhere; }
+.preview-main { box-sizing: border-box; margin: 0 auto; max-width: 1000px; padding: 20px; }
+.preview-main fieldset { border: 0; margin: 0; min-width: 0; padding: 0; }
+.visually-hidden { height: 1px; margin: -1px; overflow: hidden; position: absolute; clip: rect(0, 0, 0, 0); white-space: nowrap; width: 1px; }
+.metadata-fields { display: grid; gap: 16px; grid-template-columns: 2fr 1fr; }
+.metadata-fields label { margin: 8px 0 16px; }
+.metadata-fields input { font: inherit; }
+.option-row { align-items: center; display: flex; gap: 9px; margin: 12px 0; }
+.option-row input, .block-toggle input { flex: 0 0 auto; height: 16px; margin: 0; width: 16px; }
+.help-text { color: #777; font-size: 13px; margin: 8px 0; }
+.selection-toolbar { align-items: center; border-bottom: 1px solid #8885; display: flex; justify-content: space-between; margin-top: 20px; }
+.selection-toolbar .option-row { font-weight: 600; }
+.preview-content { margin: 16px 0 24px; }
+.preview-block { border: 1px solid #8885; border-radius: 8px; margin: 12px 0; }
+.block-toggle { align-items: center; background: #8881; display: flex; gap: 8px; margin: 0; padding: 9px 12px; }
+.editable-content { line-height: 1.6; min-height: 24px; outline: none; overflow-wrap: anywhere; padding: 12px 16px; }
+.editable-content:focus { box-shadow: inset 0 0 0 2px #4285f4; }
+.editable-content > :first-child { margin-top: 0; }
+.editable-content > :last-child { margin-bottom: 0; }
+.image-placeholder { background: #8881; border: 1px dashed #888; border-radius: 5px; display: inline-flex; flex-direction: column; font-size: 13px; gap: 4px; margin: 4px; max-width: 100%; padding: 10px 12px; vertical-align: middle; }
+.image-ignored { opacity: .65; text-decoration: line-through; }
+.image-state { color: #777; font-size: 11px; text-decoration: none; }
+.preview-actions { display: flex; flex-wrap: wrap; gap: 10px; padding: 12px 0 24px; }
+.preview-actions button { font: inherit; }
+@media (max-width: 600px) {
+  .preview-header { align-items: flex-start; padding: 16px; }
+  .preview-main { padding: 16px; }
+  .metadata-fields { grid-template-columns: 1fr; gap: 0; }
+}
