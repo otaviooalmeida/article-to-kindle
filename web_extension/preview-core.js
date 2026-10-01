@@ -151,6 +151,7 @@
     sourceBlocks.forEach((sources, index) => {
       const block = document.createElement("section");
       block.className = "preview-block";
+      block.dataset.included = "true";
 
       const label = document.createElement("label");
       label.className = "block-toggle";
@@ -158,20 +159,22 @@
       checkbox.type = "checkbox";
       checkbox.className = "include-block";
       checkbox.checked = true;
-      checkbox.setAttribute("aria-label", `Include content block ${index + 1}`);
+      checkbox.setAttribute("aria-label", `Include section ${index + 1} in the Reading Copy`);
       const labelText = document.createElement("span");
-      labelText.textContent = `Include block ${index + 1}`;
+      labelText.className = "visually-hidden";
+      labelText.textContent = `Include section ${index + 1}`;
       label.append(checkbox, labelText);
 
       const content = document.createElement("div");
       content.className = "editable-content";
       content.contentEditable = "true";
-      content.setAttribute("aria-label", `Editable article content, block ${index + 1}`);
+      content.setAttribute("aria-label", `Editable article content, section ${index + 1}`);
       sources.forEach(source => appendSafeNode(source, content, capture.sourceUrl));
 
       block.append(label, content);
       container.append(block);
     });
+    updateContentPreviews(container, false);
     return sourceBlocks.length;
   }
 
@@ -231,15 +234,18 @@
     };
   }
 
-  function updateImagePreviews(container, ignoreImages) {
+  function updateContentPreviews(container, ignoreImages) {
+    container.querySelectorAll(".preview-block").forEach(block => {
+      block.dataset.included = String(block.querySelector(".include-block").checked);
+    });
     container.querySelectorAll(".image-placeholder").forEach(image => {
       const block = image.closest(".preview-block");
       const included = block?.querySelector(".include-block").checked;
       const state = image.querySelector(".image-state");
-      state.textContent = !included ? "Omitted with this block" : ignoreImages ? "Will be omitted" : "Will be included (thumbnail not loaded)";
+      state.textContent = !included ? "Omitted with this section" : ignoreImages ? "Will be omitted" : "Will be included (thumbnail not loaded)";
       image.classList.toggle("image-ignored", ignoreImages || !included);
     });
   }
 
-  globalThis.ArticlePreview = { buildCapture, renderArticle, updateImagePreviews };
+  globalThis.ArticlePreview = { buildCapture, renderArticle, updateContentPreviews };
 })();

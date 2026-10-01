@@ -28,10 +28,15 @@ code { user-select: all; }
 .help-text { color: #777; font-size: 13px; margin: 8px 0; }
 .selection-toolbar { align-items: center; border-bottom: 1px solid #8885; display: flex; justify-content: space-between; margin-top: 20px; }
 .selection-toolbar .option-row { font-weight: 600; }
-.preview-content { margin: 16px 0 24px; }
-.preview-block { border: 1px solid #8885; border-radius: 8px; margin: 12px 0; }
-.block-toggle { align-items: center; background: #8881; display: flex; gap: 8px; margin: 0; padding: 9px 12px; }
-.editable-content { line-height: 1.6; min-height: 24px; outline: none; overflow-wrap: anywhere; padding: 12px 16px; }
+.preview-content { background: Canvas; border: 1px solid #8885; border-radius: 10px; box-sizing: border-box; margin: 18px auto 24px; max-width: 800px; padding: 32px 52px; }
+.preview-block { border-left: 3px solid transparent; margin: 0 0 0 -32px; padding: .4em 10px .4em 44px; position: relative; transition: background-color .15s ease, border-color .15s ease; }
+.preview-block[data-included="true"] { background: color-mix(in srgb, #25845f 3%, transparent); border-left-color: #25845f; }
+.preview-block[data-included="false"] { background: color-mix(in srgb, #c34e58 10%, transparent); border-left: 3px dashed #bd4652; }
+.block-toggle { align-items: center; background: Canvas; border: 1px solid #8887; border-radius: 6px; box-shadow: 0 1px 3px #0002; box-sizing: border-box; cursor: pointer; display: flex; height: 28px; justify-content: center; left: 1px; margin: 0; padding: 4px; position: absolute; top: .45em; width: 28px; z-index: 1; }
+.block-toggle:focus-within { outline: 2px solid #4285f4; outline-offset: 2px; }
+.block-toggle input { accent-color: #25845f; cursor: pointer; }
+.preview-block[data-included="false"] .block-toggle input { accent-color: #bd4652; }
+.editable-content { line-height: 1.7; min-height: 24px; outline: none; overflow-wrap: anywhere; }
 .editable-content:focus { box-shadow: inset 0 0 0 2px #4285f4; }
 .editable-content > :first-child { margin-top: 0; }
 .editable-content > :last-child { margin-bottom: 0; }
@@ -44,4 +49,6 @@ code { user-select: all; }
   .preview-header { align-items: flex-start; padding: 16px; }
   .preview-main { padding: 16px; }
   .metadata-fields { grid-template-columns: 1fr; gap: 0; }
+  .preview-content { padding: 24px 20px 28px 44px; }
+  .preview-block { margin-left: -26px; padding-left: 38px; }
 }

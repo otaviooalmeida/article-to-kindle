@@ -20,10 +20,10 @@ function updateSelection() {
   const selected = checkboxes.filter(checkbox => checkbox.checked).length;
   selectAllInput.checked = checkboxes.length > 0 && selected === checkboxes.length;
   selectAllInput.indeterminate = selected > 0 && selected < checkboxes.length;
-  document.querySelector("#selection-count").textContent = `${selected} of ${checkboxes.length} blocks selected`;
+  document.querySelector("#selection-count").textContent = `${selected} of ${checkboxes.length} sections included`;
   downloadButton.disabled = busy || !selected || !titleInput.value.trim();
   sendButton.disabled = downloadButton.disabled;
-  ArticlePreview.updateImagePreviews(content, ignoreImagesInput.checked);
+  ArticlePreview.updateContentPreviews(content, ignoreImagesInput.checked);
   const images = [...content.querySelectorAll(".image-placeholder")]
     .filter(image => image.closest(".preview-block").querySelector(".include-block").checked).length;
   document.querySelector("#image-summary").textContent = images
