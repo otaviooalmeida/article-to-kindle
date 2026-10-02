@@ -7,10 +7,9 @@ docs/agents
 AGENTS.md
 CONTEXT.md
 docs/
-tests/
 # C extensions
 *.so
-
+tests
 # Distribution / packaging
 .Python
 build/

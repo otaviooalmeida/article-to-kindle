@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "article-to-kindle"
+dynamic = ["version"]
+description = "Create Kindle-ready EPUB Reading Copies and run a local Chrome companion"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+dependencies = [
+    "beautifulsoup4==4.13.4",
+    "fastapi==0.115.12",
+    "latex2mathml==3.81.1",
+    "uvicorn==0.34.2",
+    "Pillow==11.2.1",
+]
+
+[project.scripts]
+article-to-kindle = "cli.main:main"
+
+[tool.setuptools]
+packages = ["backend", "cli"]
+
+[tool.setuptools.dynamic]
+version = {attr = "cli.__version__"}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import uuid
 import zipfile
@@ -9,7 +10,10 @@ from datetime import UTC, datetime
 from html import escape
 import re
 from pathlib import Path
+from xml.etree import ElementTree
 
+from .config import MAX_EPUB_BYTES
+from .errors import ArticleError
 from .models import Article
 
 CSS = """
@@ -28,19 +32,61 @@ math { font-size: 1.05em; } math[display="block"] { display: block; margin: 1em 
 EMOJI_RE = re.compile("[\\U0001F1E6-\\U0001F1FF\\U0001F300-\\U0001FAFF\\u2300-\\u23FF\\u2600-\\u27BF\\u2B00-\\u2BFF\\uFE0F\\u200D]")
 
 
+def read_epub_metadata(path: Path) -> Article:
+    """Read bounded EPUB metadata for resubmission; never extract archive members."""
+    if path.stat().st_size > MAX_EPUB_BYTES:
+        raise ArticleError("EPUB exceeds the 50 MiB Kindle submission limit.")
+
+    def read_member(book, name):
+        if book.getinfo(name).file_size > 1024 * 1024:
+            raise ArticleError("EPUB metadata exceeds the 1 MiB limit.")
+        return book.read(name)
+
+    def xml(data):
+        # EPUB metadata never needs DTDs or entities. Reject UTF-16/32 and NULs
+        # as well so the declaration check cannot be bypassed by another encoding.
+        if b"\x00" in data or b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
+            raise ArticleError("EPUB metadata must not contain DTDs or entities.")
+        return ElementTree.fromstring(data)
+
+    try:
+        with zipfile.ZipFile(path) as book:
+            if read_member(book, "mimetype") != b"application/epub+zip":
+                raise ArticleError("File is not an EPUB.")
+            container = xml(read_member(book, "META-INF/container.xml"))
+            rootfile = container.find("{*}rootfiles/{*}rootfile")
+            if rootfile is None or not rootfile.get("full-path"):
+                raise ArticleError("EPUB has no package metadata.")
+            package = xml(read_member(book, rootfile.get("full-path")))
+        metadata = package.find("{*}metadata")
+        if metadata is None:
+            raise ArticleError("EPUB has no article metadata.")
+        namespace = "{http://purl.org/dc/elements/1.1/}"
+        title = (metadata.findtext(f"{namespace}title") or "").strip()
+        author = (metadata.findtext(f"{namespace}creator") or "Unknown author").strip()
+        source = (metadata.findtext(f"{namespace}source") or "").strip()
+        if not title or "\n" in title or "\r" in title:
+            raise ArticleError("EPUB title is missing or invalid.")
+        return Article(title, author, source, "", [], [])
+    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError, RuntimeError, NotImplementedError) as error:
+        raise ArticleError("Invalid or unsupported EPUB package.") from error
+
+
 def without_emojis(value: str) -> str:
     return EMOJI_RE.sub("", value)
 
 
-def epub_xhtml(article: Article) -> str:
+def epub_xhtml(article: Article, *, include_source_link: bool = True) -> str:
     title = without_emojis(article.title)
     author = without_emojis(article.author)
     source_url = without_emojis(article.source_url)
     content_html = without_emojis(article.content_html)
+    source = (f'<a href="{escape(source_url, quote=True)}">{escape(source_url)}</a>'
+              if include_source_link else escape(source_url))
     return f'''<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>{escape(title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
-<body><article><h1 class="title">{escape(title)}</h1><p class="byline">{escape(author)}</p>{content_html}<p class="source">Source: <a href="{escape(source_url, quote=True)}">{escape(source_url)}</a></p></article></body></html>'''
+<body><article><h1 class="title">{escape(title)}</h1><p class="byline">{escape(author)}</p>{content_html}<p class="source">Source: {source}</p></article></body></html>'''
 
 
 def nav_xhtml(article: Article) -> str:
@@ -51,7 +97,7 @@ def nav_xhtml(article: Article) -> str:
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>Contents</title></head><body><nav epub:type="toc" id="toc" xmlns:epub="http://www.idpf.org/2007/ops"><h1>Contents</h1><ol><li><a href="article.xhtml">{escape(title)}</a></li>{items}</ol></nav></body></html>'''
 
 
-def write_epub(article: Article, destination: Path) -> None:
+def write_epub(article: Article, destination: Path, *, include_source_link: bool = True, overwrite: bool = True) -> None:
     identifier = uuid.uuid5(uuid.NAMESPACE_URL, article.source_url)
     title = without_emojis(article.title)
     author = without_emojis(article.author)
@@ -73,14 +119,20 @@ def write_epub(article: Article, destination: Path) -> None:
             book.writestr("META-INF/container.xml", container)
             book.writestr("OEBPS/content.opf", opf)
             book.writestr("OEBPS/style.css", CSS)
-            book.writestr("OEBPS/article.xhtml", epub_xhtml(article))
+            book.writestr("OEBPS/article.xhtml", epub_xhtml(article, include_source_link=include_source_link))
             book.writestr("OEBPS/nav.xhtml", nav_xhtml(article))
             for asset in article.images:
                 book.writestr(f"OEBPS/{asset.href}", asset.data)
         if not zipfile.is_zipfile(temporary):
             raise ValueError("EPUB creation failed validation.")
-        temporary.replace(destination)
-        temporary = None
+        if overwrite:
+            temporary.replace(destination)
+            temporary = None
+        else:
+            try:
+                os.link(temporary, destination)
+            except FileExistsError as error:
+                raise ArticleError(f"Output already exists: {destination}") from error
     finally:
         if temporary and temporary.exists():
             temporary.unlink()

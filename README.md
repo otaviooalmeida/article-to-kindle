@@ -1,78 +1,84 @@
 # Article to Kindle
 
-Capture a rendered webpage article (such as Medium and TowardsDataScience), preserve its text, formulas, and editorial images, and turn it into a Kindle-ready EPUB.
+Convert supported web articles into EPUB reading copies for Kindle. Use the CLI for URLs and saved content, or the Chrome extension to capture an article already rendered in your browser.
 
-## Structure
+The project is early-stage: extraction depends on publisher markup, and Kindle rendering can vary. It does not bypass paywalls or transfer browser cookies.
 
-```text
-article_to_kindle.py       # launcher da CLI
-cli/main.py                # comandos CLI e --serve
-backend/api.py             # API FastAPI autenticada
-backend/extractor.py       # captura, sanitização, MathML e imagens
-backend/epub.py            # pacote EPUB
-backend/delivery.py        # adaptador SMTP
-backend/config.py          # ambiente e limites
-backend/models.py          # Article e ImageAsset
-web_extension/             # extensão Chrome MV3
-  popup.*                  # abre a prévia do Article Capture
-  preview.*                # revisão, edição e seleção do conteúdo
-  preview-core.js          # sanitização e serialização da prévia
-  capture-store.js         # transporte temporário da captura para a prévia
-  content.js               # captura DOM renderizado
-  service-worker.js        # injeta captura após clique
-  options.*                # URL e token locais
-```
+## Features
+
+- Preserve article text, headings, code, tables, formulas, and editorial images.
+- Convert URLs, saved HTML, Article Capture JSON, or URL lists.
+- Preview, edit, and select captured sections in Chrome.
+- Optionally submit EPUBs through your SMTP account.
 
 ## Install
 
+Requires Python 3.11+. Chrome is needed only for the extension.
+
 ```bash
+git clone https://github.com/otaviooalmeida/article-to-kindle.git
+cd article-to-kindle
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+source .venv/bin/activate
+python -m pip install -e .
 ```
 
-## Chrome extension and local server
-
-1. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the `web_extension/` directory.
-2. Open the extension settings and copy the displayed `chrome-extension://...` origin.
-3. Copy `.env.example` to `.env` and fill in the settings. The application loads `.env` automatically; shell variables take precedence.
-
-```bash
-cp .env.example .env
-# Edit .env and replace the placeholder values.
-```
-
-4. Put the same token in the extension settings and save.
-5. Start the local server and leave it running:
-
-```bash
-./article_to_kindle.py --serve
-```
-
-6. Visit a supported article and open the extension. Choose **Preview & select content**, edit the Reading Copy, optionally check **Ignore images**, then choose **Download EPUB** or **Send to Kindle**.
-
-The server listens only on `127.0.0.1:8765`. SMTP acceptance is a Kindle Submission, not proof that Amazon has added the document to the Kindle library. Email EPUBs are limited to 50 MiB.
+On Windows, create the environment with `py -3 -m venv .venv` and activate it with `.venv\Scripts\Activate.ps1`.
 
 ## CLI
 
 ```bash
-./article_to_kindle.py 'https://medium.com/@user/article-slug'
+# Convert a public article URL
+article-to-kindle convert 'https://openai.com/index/chatgpt/' -o article.epub
+
+# Convert saved content
+article-to-kindle convert --html saved.html --source-url 'https://openai.com/index/chatgpt/'
+article-to-kindle convert --capture capture.json
+
+# Process URL lists and submit an existing EPUB
+article-to-kindle batch urls.txt --output-dir reading-copies
+article-to-kindle send article.epub --to reader@kindle.com
+
+# Check configuration and dependencies
+article-to-kindle doctor
 ```
 
-Without `--output`, the EPUB is saved under `outputs/`. Use `--output article.epub` for another path, or `--send` to submit it through SMTP.
+Without `-o`, EPUBs are written to `outputs/`. Existing files are not overwritten. Use `--no-images` or `--no-links` to omit images or clickable links. Run `article-to-kindle <command> --help` for options.
 
-## Checks
+Article Capture JSON contains `title`, `author`, `sourceUrl`, and `html` fields. Saved HTML requires `--source-url` so relative links and images can be resolved. Batch input contains one URL per line.
+
+## Chrome extension
+
+1. In `chrome://extensions`, enable **Developer mode** and load `web_extension/` with **Load unpacked**.
+2. Copy the extension origin shown in its Settings.
+3. Run `article-to-kindle setup`; enter the origin and optionally configure SMTP.
+4. Copy `ARTICLE_TO_KINDLE_TOKEN` from the generated configuration into the extension settings.
+5. Start the local companion with `article-to-kindle serve`.
+6. Open a supported article, launch the extension, and preview or edit the capture. Download the EPUB or submit it to Kindle.
+
+The companion listens only on `127.0.0.1:8765`. Do not expose it to a network. SMTP credentials remain in the local Python configuration, not in Chrome.
+
+## Configuration and email
+
+`article-to-kindle setup` creates the local configuration. Shell environment variables override file values. The companion requires `ARTICLE_TO_KINDLE_TOKEN` and `ARTICLE_TO_KINDLE_ALLOWED_ORIGIN`. Email submission additionally requires `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM`; `KINDLE_EMAIL` is an optional CLI default. See [`.env.example`](.env.example).
+
+Approve `SMTP_FROM` in Amazon's [Personal Document Settings](https://www.amazon.com/sendtokindle/email) before sending. SMTP acceptance confirms submission to the mail server, not delivery to the Kindle library. EPUB email attachments are limited to 50 MiB.
+
+## Supported sites and limitations
+
+The current host allowlist includes Medium, Towards Data Science, Substack, DEV, Hashnode, KDnuggets, Analytics Vidhya, Machine Learning Mastery, The Gradient, Papers with Code, Hugging Face, DeepLearning.AI, Google Research, Microsoft, Meta AI, and OpenAI, including subdomains.
+
+URL conversion fetches public HTML and does not execute JavaScript or use your browser session. Use the extension for content already rendered in Chrome. Formula conversion uses MathML where possible; unsupported formulas remain text with a warning. Image and layout compatibility depends on the source site and Kindle software.
+
+## Development and contributions
 
 ```bash
-.venv/bin/python article_to_kindle.py --self-test
-.venv/bin/python -m unittest -v tests.test_api
-.venv/bin/python -m unittest -v tests.test_extension
+python -m unittest discover -s tests -v
+article-to-kindle self-test
 ```
 
-The extension fixture check needs Chrome or Chromium. Before using the MVP, manually smoke-test download and Kindle Submission once on Medium and once on Towards Data Science.
+Browser fixture tests require Chrome or Chromium. Report bugs or propose changes through [GitHub Issues](https://github.com/otaviooalmeida/article-to-kindle/issues). Include the source URL when shareable, expected and actual behavior, and relevant warnings. Do not include cookies, private article content, or credentials.
 
-Supported article hosts currently include Medium, Towards Data Science, Substack, DEV, Hashnode, KDnuggets, Analytics Vidhya, Machine Learning Mastery, The Gradient, Papers with Code, Hugging Face, The Batch, Google Research, Microsoft Research, Meta AI, and OpenAI.
+## License
 
-Extraction is generic: it scores semantic content candidates (`article`, `main`, `role=main`, `articleBody`, and common post-content classes) and reads metadata from JSON-LD, Open Graph, and the rendered DOM. Site-specific adapters are added only when a fixture demonstrates a real exception.
-Imagens WebP são convertidas para JPEG durante a geração do EPUB para compatibilidade com Kindle; JPEG, PNG, GIF e SVG são preservadas.
-
-Public pages and content already present in the rendered DOM only; the extension does not bypass paywalls or transfer browser cookies.
+[Apache License 2.0](LICENSE). Source articles remain subject to their authors' rights and terms; use generated copies only where permitted.

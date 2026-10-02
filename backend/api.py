@@ -10,8 +10,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from .config import ALLOWED_ORIGIN, API_TOKEN, MAX_CAPTURE_BYTES, MAX_EPUB_BYTES
-from .delivery import send_to_kindle
+from .config import ALLOWED_ORIGIN, API_TOKEN, KINDLE_EMAIL, MAX_CAPTURE_BYTES, MAX_EPUB_BYTES, load_dotenv
+from .delivery import is_valid_email_address, send_to_kindle
 from .epub import write_epub
 from .errors import ArticleError
 from .extractor import extract_article, require_article_url, slugify
@@ -57,6 +57,7 @@ class OriginMiddleware:
         return {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Article-To-Kindle-Origin", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Expose-Headers": "X-Article-Warnings"}
 
 
+load_dotenv()
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(OriginMiddleware)
 
@@ -77,6 +78,7 @@ class ArticleCapture(BaseModel):
     author: str = Field(min_length=1)
     sourceUrl: str = Field(min_length=1)
     html: str = Field(min_length=1)
+    kindleEmail: str | None = Field(default=None, max_length=254)
 
 
 async def authenticate(authorization: str = Header(default="")) -> None:
@@ -127,6 +129,9 @@ async def create_epub(capture: ArticleCapture):
 
 @app.post("/kindle", dependencies=[Depends(authenticate)])
 async def submit_to_kindle(capture: ArticleCapture):
+    recipient = (capture.kindleEmail or os.environ.get(KINDLE_EMAIL, "")).strip()
+    if not is_valid_email_address(recipient):
+        raise HTTPException(400, detail="Enter a valid Kindle email address.")
     article = captured_article(capture)
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory) / f"{article.title}.epub"
@@ -134,7 +139,7 @@ async def submit_to_kindle(capture: ArticleCapture):
         if output.stat().st_size > MAX_EPUB_BYTES:
             raise HTTPException(413, detail="Generated EPUB exceeds 50 MiB.")
         try:
-            send_to_kindle(article, output)
+            send_to_kindle(article, output, recipient)
         except ArticleError as exception:
             raise HTTPException(502, detail="Kindle submission failed.") from exception
     return {"message": "Sent to Kindle email; Amazon delivery is pending.", "warnings": article.warnings}
