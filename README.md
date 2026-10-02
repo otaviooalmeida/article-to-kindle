@@ -58,7 +58,9 @@ The server listens only on `127.0.0.1:8765`. SMTP acceptance is a Kindle Submiss
 ./article_to_kindle.py 'https://medium.com/@user/article-slug'
 ```
 
-Without `--output`, the EPUB is saved under `outputs/`. Use `--output article.epub` for another path, or `--send` to submit it through SMTP.
+Without `--output`, the EPUB is saved under `outputs/`. Use `--output article.epub` for another path, or `--send` to submit it through SMTP. `--to reader@kindle.com` overrides `KINDLE_EMAIL` when sending. Submission configuration is checked before fetching, and EPUB attachments must not exceed 50 MiB.
+
+Progress and content warnings appear on stderr; the title, author, image count, and saved path appear on stdout. `--debug` includes tracebacks. If submission fails, the EPUB is retained. Do not retry blindly after an uncertain SMTP result: Amazon delivery may still be pending.
 
 ## Checks
 

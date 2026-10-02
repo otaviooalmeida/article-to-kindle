@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path
 
 from backend.config import ALLOWED_ORIGIN, API_TOKEN, KINDLE_EMAIL
-from backend.delivery import send_to_kindle
+from backend.delivery import send_to_kindle, submission_settings
 from backend.epub import write_epub
 from backend.errors import ArticleError
 from backend.extractor import extract_article, fetch_html, slugify
@@ -57,6 +57,7 @@ def run(argv: list[str] | None = None) -> int:
     delivery = parser.add_mutually_exclusive_group()
     delivery.add_argument("--send", action="store_true", help="Email the EPUB to KINDLE_EMAIL")
     delivery.add_argument("--dry-run", action="store_true", help="Create the EPUB without sending email")
+    parser.add_argument("--to", help="Override KINDLE_EMAIL for --send")
     parser.add_argument("--self-test", action="store_true", help="Run the built-in EPUB check")
     parser.add_argument("--serve", action="store_true", help="Run the local API on 127.0.0.1:8765")
     parser.add_argument("--debug", action="store_true", help="Show tracebacks for failures")
@@ -73,6 +74,9 @@ def run(argv: list[str] | None = None) -> int:
         return 0
     if not args.url:
         parser.error("a URL is required unless --self-test or --serve is used")
+    if args.to is not None and not args.send:
+        parser.error("--to requires --send")
+    recipient = submission_settings(args.to)[2] if args.send else None
     print("Fetching article…", file=sys.stderr)
     page_html, final_url = fetch_html(args.url)
     print("Extracting article…", file=sys.stderr)
@@ -86,10 +90,13 @@ def run(argv: list[str] | None = None) -> int:
     if args.send:
         print("Submitting to Kindle…", file=sys.stderr)
         try:
-            send_to_kindle(article, output)
+            send_to_kindle(article, output, recipient)
         except (ArticleError, OSError, ValueError) as error:
-            raise ArticleError(f"Kindle submission failed. EPUB retained at {output}. {error}") from error
-        print(f"SMTP accepted for {os.environ[KINDLE_EMAIL]}; Amazon delivery pending.")
+            raise ArticleError(
+                f"Kindle submission failed. EPUB retained at {output}. {error}\n"
+                f"Do not retry blindly: SMTP acceptance may be uncertain."
+            ) from error
+        print(f"SMTP accepted for {recipient}; Amazon delivery pending.")
     elif args.dry_run:
         print("Dry run: email not sent.")
     return 0

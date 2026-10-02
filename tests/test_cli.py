@@ -14,6 +14,15 @@ from cli.main import main
 
 
 class CliTest(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ, {
+            "SMTP_HOST": "smtp.example.com", "SMTP_PORT": "587",
+            "SMTP_USERNAME": "sender@example.com", "SMTP_PASSWORD": "secret",
+            "SMTP_FROM": "sender@example.com", "KINDLE_EMAIL": "reader@kindle.com",
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def invoke(self, *args):
         stdout, stderr = io.StringIO(), io.StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):
@@ -70,6 +79,21 @@ class CliTest(unittest.TestCase):
         send.assert_called_once()
         self.assertIn("SMTP accepted", stdout)
         self.assertIn("Amazon delivery pending", stdout)
+
+    def test_explicit_recipient_and_preflight(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("cli.main.fetch_html", return_value=("html", "https://openai.com/article")), \
+                patch("cli.main.extract_article", return_value=self.article()), \
+                patch("cli.main.send_to_kindle") as send:
+            code, _, _ = self.invoke("https://openai.com/article", "--output",
+                                      str(Path(directory) / "article.epub"), "--send", "--to", "other@kindle.com")
+        self.assertEqual(0, code)
+        self.assertEqual("other@kindle.com", send.call_args.args[2])
+        with patch.dict(os.environ, {"SMTP_PORT": "invalid"}), patch("cli.main.fetch_html") as fetch:
+            code, _, stderr = self.invoke("https://openai.com/article", "--send")
+        self.assertEqual(1, code)
+        fetch.assert_not_called()
+        self.assertIn("error:", stderr)
 
     def test_existing_output_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as directory, \
