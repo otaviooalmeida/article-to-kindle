@@ -27,8 +27,13 @@ web_extension/             # extensão Chrome MV3
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install .
+.venv/bin/article-to-kindle --help
 ```
+
+The installed `article-to-kindle` command works outside the checkout; `python -m cli` is also supported. For editable development installs, use `.venv/bin/pip install -e .`. Python 3.11+ is required. On Windows, use `.venv\\Scripts\\python.exe` / `.venv\\Scripts\\pip.exe` / `.venv\\Scripts\\article-to-kindle.exe`. The repository launcher remains available and detects either venv layout. `--version` reports the companion version.
+
+The Python package does not install the Chrome extension automatically: load `web_extension/` separately as described below. `requirements.txt` remains available for dependency-only source setups.
 
 ## Chrome extension and local server
 

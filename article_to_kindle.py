@@ -7,7 +7,8 @@ from pathlib import Path
 
 
 def use_project_venv() -> None:
-    project_python = Path(__file__).with_name(".venv") / "bin" / "python"
+    directory, executable = ("Scripts", "python.exe") if sys.platform == "win32" else ("bin", "python")
+    project_python = Path(__file__).with_name(".venv") / directory / executable
     if project_python.exists() and Path(sys.executable).absolute() != project_python.absolute():
         os.execv(str(project_python), [str(project_python), __file__, *sys.argv[1:]])
 

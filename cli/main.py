@@ -14,6 +14,7 @@ from backend.config import CONFIG_FILE, companion_settings, default_config_path,
 from backend.delivery import send_to_kindle, submission_settings
 from backend.epub import read_epub_metadata, write_epub
 from backend.errors import ArticleError
+from cli import __version__
 
 
 def fetch_html(url):
@@ -62,6 +63,7 @@ def self_test() -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, epilog="Legacy URL, --serve, and --self-test invocations remain supported.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--debug", action="store_true", help="Show tracebacks for failures")
     parser.add_argument("--config", type=Path, help="Use this .env file (shell variables take precedence)")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -116,7 +118,7 @@ def normalize_argv(argv: list[str], parser: argparse.ArgumentParser) -> list[str
         else:
             break
     first = argv[index] if index < len(argv) else None
-    if first is None or first in {"-h", "--help", "convert", "send", "serve", "self-test", "doctor", "setup"}:
+    if first is None or first in {"-h", "--help", "--version", "convert", "send", "serve", "self-test", "doctor", "setup"}:
         return argv
     return ["convert", *argv]
 
