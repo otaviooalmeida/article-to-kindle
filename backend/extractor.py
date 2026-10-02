@@ -36,10 +36,32 @@ ALLOWED_TAGS = {
     "h2", "h3", "h4", "hr", "i", "img", "li", "ol", "p", "pre", "strong",
     "table", "tbody", "td", "th", "thead", "tr", "ul", "math", "mrow", "mi",
     "mn", "mo", "mfrac", "msqrt", "msup", "msub", "msubsup", "mtext", "mstyle",
-    "semantics", "annotation", "menclose", "merror", "mfenced", "mmultiscripts",
-    "mover", "mpadded", "mphantom", "mprescripts", "mroot", "mspace", "mtable",
-    "mtd", "mtr", "munder", "munderover", "none",
+    "semantics", "annotation", "annotation-xml", "maction", "maligngroup", "malignmark",
+    "menclose", "merror", "mfenced", "mglyph", "mlabeledtr", "mlongdiv", "mmultiscripts",
+    "mover", "mpadded", "mphantom", "mprescripts", "mroot", "mspace", "ms", "msgroup",
+    "msline", "msqrt", "msrow", "mstack", "mtable", "mtd", "mtr", "munder",
+    "munderover", "none",
 }
+MATHML_TAGS = {
+    "math", "maction", "menclose", "merror", "mfenced", "mfrac", "mi", "mmultiscripts",
+    "mn", "mo", "mover", "mpadded", "mphantom", "mprescripts", "mroot", "mrow", "ms",
+    "mspace", "msqrt", "mstyle", "msub", "msubsup", "msup", "mtable", "mtd", "mtext",
+    "mtr", "munder", "munderover", "none", "annotation", "annotation-xml", "maligngroup",
+    "malignmark", "mlabeledtr", "mlongdiv", "msgroup", "msline", "msrow", "mstack", "semantics",
+}
+MATHML_ATTRIBUTES = {
+    "accent", "accentunder", "align", "alttext", "bevelled", "charalign", "close",
+    "columnalign", "columnlines", "columnspacing", "columnspan", "denomalign", "depth",
+    "dir", "display", "displaystyle", "encoding", "equalcolumns", "equalrows", "fence",
+    "form", "frame", "framespacing", "groupalign", "height", "indentalign", "indentshift",
+    "infixlinebreakstyle", "largeop", "length", "linebreak", "linethickness", "location",
+    "longdivstyle", "lspace", "mathbackground", "mathcolor", "mathsize", "mathvariant",
+    "maxsize", "minlabelspacing", "minsize", "movablelimits", "notation", "numalign", "open",
+    "overflow", "position", "rowalign", "rowlines", "rowspacing", "rowspan", "rspace",
+    "scriptlevel", "selection", "separator", "separators", "side", "stackalign", "stretchy",
+    "subscriptshift", "superscriptshift", "symmetric", "voffset", "width", "xmlns", "xml:lang",
+}
+MATHML_NAMESPACE = "http://www.w3.org/1998/Math/MathML"
 IMAGE_EXTENSIONS = {
     "image/gif": ".gif", "image/jpeg": ".jpg", "image/png": ".png",
     "image/svg+xml": ".svg", "image/webp": ".webp",
@@ -207,24 +229,42 @@ def _replace_with_math(node: Tag, latex: str, display: bool = False) -> None:
     node.replace_with(fragment.math)
 
 
+def _is_math_renderer(tag: Tag) -> bool:
+    if tag.name == "mjx-container":
+        return True
+    classes = tag.get("class", [])
+    return any(re.match(r"^(?:katex(?:-|$)|mathjax(?:[_-]|$)|mjx-)", name, re.IGNORECASE) for name in classes)
+
+
 def extract_math(root: Tag) -> list[str]:
     failed = 0
-    for tag in list(root.find_all(["script", "span", "div"])[::-1]):
+    for tag in list(root.find_all(True))[::-1]:
+        if _is_math_renderer(tag):
+            semantic_math = tag.find("math")
+            if semantic_math:
+                tag.replace_with(semantic_math)
+
+    for tag in list(root.find_all(["script", "span", "div", "mjx-container"])[::-1]):
         classes = " ".join(tag.get("class", [])) if tag.name != "script" else ""
         annotation = tag.find("annotation", attrs={"encoding": "application/x-tex"})
         latex = tag.get("data-latex") or tag.get("data-tex") or (annotation.get_text() if annotation else None)
         if tag.name == "script" and "math/tex" in tag.get("type", ""):
             latex = tag.get_text()
         if latex:
+            script_display = (
+                tag.name == "script"
+                and re.search(r"mode\s*=\s*display", tag.get("type", ""), re.IGNORECASE)
+            )
+            display = "display" in classes or "display" in tag.get("data-mode", "") or script_display
             try:
-                _replace_with_math(tag, latex, "display" in classes or "display" in tag.get("data-mode", ""))
+                _replace_with_math(tag, latex, display)
             except Exception:
                 tag.replace_with(latex)
                 failed += 1
 
     pattern = re.compile(r"(\\\[(.+?)\\\]|\\\((.+?)\\\)|\$\$(.+?)\$\$|\$(?!\s)(.+?)(?<!\s)\$)", re.DOTALL)
     for text_node in list(root.find_all(string=True)):
-        if text_node.parent and text_node.parent.name in {"math", "script", "style"} or not pattern.search(str(text_node)):
+        if text_node.find_parent(["math", "script", "style"]) or not pattern.search(str(text_node)):
             continue
         fragment, last = BeautifulSoup("", "html.parser"), 0
         for match in pattern.finditer(str(text_node)):
@@ -274,8 +314,12 @@ def sanitize_article(root: Tag, base_url: str) -> None:
                 tag.attrs = {"src": source, "alt": clean_text(str(tag.get("alt", "")))}
             else:
                 tag.decompose()
+        elif tag.name in MATHML_TAGS:
+            tag.attrs = {key: value for key, value in tag.attrs.items() if key.lower() in MATHML_ATTRIBUTES}
+            if tag.name == "math" and not tag.get("xmlns"):
+                tag["xmlns"] = MATHML_NAMESPACE
         else:
-            tag.attrs = {key: value for key, value in tag.attrs.items() if tag.name == "math" and key in {"xmlns", "display"}}
+            tag.attrs = {}
 
 
 def normalize_image(data: bytes, media_type: str) -> tuple[bytes, str, str]:

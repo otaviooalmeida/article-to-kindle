@@ -4,9 +4,11 @@
     "h2", "h3", "h4", "hr", "i", "img", "li", "ol", "p", "pre", "strong",
     "table", "tbody", "td", "th", "thead", "tr", "ul", "math", "mrow", "mi",
     "mn", "mo", "mfrac", "msqrt", "msup", "msub", "msubsup", "mtext", "mstyle",
-    "semantics", "annotation", "menclose", "merror", "mfenced", "mmultiscripts",
-    "mover", "mpadded", "mphantom", "mprescripts", "mroot", "mspace", "mtable",
-    "mtd", "mtr", "munder", "munderover", "none",
+    "semantics", "annotation", "annotation-xml", "maction", "maligngroup", "malignmark",
+    "menclose", "merror", "mfenced", "mglyph", "mlabeledtr", "mlongdiv", "mmultiscripts",
+    "mover", "mpadded", "mphantom", "mprescripts", "mroot", "mspace", "ms", "msgroup",
+    "msline", "msqrt", "msrow", "mstack", "mtable", "mtd", "mtr", "munder",
+    "munderover", "none",
   ]);
   const DROP_TAGS = new Set([
     "button", "embed", "form", "iframe", "input", "noscript", "object", "script",
@@ -15,6 +17,18 @@
   const IMAGE_TYPES = "gif|jpe?g|png|svg\\+xml|webp";
   const BLOCK_TAGS = new Set(["blockquote", "figure", "h1", "h2", "h3", "h4", "hr", "ol", "p", "pre", "table", "ul"]);
   const MATHML_NAMESPACE = "http://www.w3.org/1998/Math/MathML";
+  const MATHML_ATTRIBUTES = new Set([
+    "accent", "accentunder", "align", "alttext", "bevelled", "charalign", "close",
+    "columnalign", "columnlines", "columnspacing", "columnspan", "denomalign", "depth",
+    "dir", "display", "displaystyle", "encoding", "equalcolumns", "equalrows", "fence",
+    "form", "frame", "framespacing", "groupalign", "height", "indentalign", "indentshift",
+    "infixlinebreakstyle", "largeop", "length", "linebreak", "linethickness", "location",
+    "longdivstyle", "lspace", "mathbackground", "mathcolor", "mathsize", "mathvariant",
+    "maxsize", "minlabelspacing", "minsize", "movablelimits", "notation", "numalign", "open",
+    "overflow", "position", "rowalign", "rowlines", "rowspacing", "rowspan", "rspace",
+    "scriptlevel", "selection", "separator", "separators", "side", "stackalign", "stretchy",
+    "subscriptshift", "superscriptshift", "symmetric", "voffset", "width", "xmlns", "xml:lang",
+  ]);
 
   function safeWebUrl(value, baseUrl) {
     if (typeof value !== "string" || !value.trim()) return "";
@@ -30,6 +44,17 @@
     const source = String(value || "").trim();
     const dataImage = new RegExp(`^data:image/(?:${IMAGE_TYPES})(?:;[^,]*)?,`, "i");
     return dataImage.test(source) ? source : safeWebUrl(source, baseUrl);
+  }
+
+  function isMathRenderer(source) {
+    if (source.localName.toLowerCase() === "mjx-container") return true;
+    return [...source.classList].some(name => /^(?:katex(?:-|$)|mathjax(?:[_-]|$)|mjx-)/i.test(name));
+  }
+
+  function isDisplayMathRenderer(source, math) {
+    return source.getAttribute("display") === "true" ||
+      math.getAttribute("display") === "block" ||
+      [...source.classList].some(name => /(?:^|[-_])display(?:$|[-_])/i.test(name));
   }
 
   function removeAttribute(tag, name) {
@@ -99,6 +124,13 @@
       target.append(placeholder);
       return;
     }
+    if (tag !== "math" && isMathRenderer(source)) {
+      const semanticMath = source.querySelector("math");
+      if (semanticMath) {
+        appendSafeNode(semanticMath, target, baseUrl);
+        return;
+      }
+    }
     if (!ALLOWED_TAGS.has(tag)) {
       source.childNodes.forEach(child => appendSafeNode(child, target, baseUrl));
       return;
@@ -109,10 +141,14 @@
     if (tag === "a") {
       const href = safeWebUrl(source.getAttribute("href"), baseUrl);
       if (href) element.setAttribute("href", href);
-    } else if (tag === "math") {
-      element.setAttribute("xmlns", MATHML_NAMESPACE);
-      if (["inline", "block"].includes(source.getAttribute("display"))) {
-        element.setAttribute("display", source.getAttribute("display"));
+    } else if (source.namespaceURI === MATHML_NAMESPACE) {
+      for (const attribute of source.attributes) {
+        if (MATHML_ATTRIBUTES.has(attribute.name.toLowerCase())) {
+          element.setAttribute(attribute.name, attribute.value);
+        }
+      }
+      if (tag === "math" && !element.hasAttribute("xmlns")) {
+        element.setAttribute("xmlns", MATHML_NAMESPACE);
       }
     }
     source.childNodes.forEach(child => appendSafeNode(child, element, baseUrl));
@@ -134,6 +170,18 @@
       if (node.nodeType !== Node.ELEMENT_NODE) return;
       const tag = node.localName.toLowerCase();
       if (DROP_TAGS.has(tag)) return;
+      if (isMathRenderer(node)) {
+        const math = node.querySelector("math");
+        if (math) {
+          if (isDisplayMathRenderer(node, math)) {
+            flushInline();
+            blocks.push([node]);
+          } else {
+            inlineContent.push(node);
+          }
+          return;
+        }
+      }
       if (BLOCK_TAGS.has(tag) || (tag === "math" && node.getAttribute("display") === "block")) {
         flushInline();
         blocks.push([node]);
@@ -217,10 +265,14 @@
     if (tag === "a") {
       const href = safeWebUrl(node.getAttribute("href"), baseUrl);
       if (href) attributes += ` href="${escapeHtml(href)}"`;
-    } else if (tag === "math") {
-      attributes += ` xmlns="${MATHML_NAMESPACE}"`;
-      if (["inline", "block"].includes(node.getAttribute("display"))) {
-        attributes += ` display="${node.getAttribute("display")}"`;
+    } else if (node.namespaceURI === MATHML_NAMESPACE) {
+      for (const attribute of node.attributes) {
+        if (MATHML_ATTRIBUTES.has(attribute.name.toLowerCase())) {
+          attributes += ` ${attribute.name}="${escapeHtml(attribute.value)}"`;
+        }
+      }
+      if (tag === "math" && !node.hasAttribute("xmlns")) {
+        attributes += ` xmlns="${MATHML_NAMESPACE}"`;
       }
     }
     if (["br", "hr"].includes(tag)) return `<${tag}${attributes}>`;
