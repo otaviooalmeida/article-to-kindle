@@ -67,6 +67,20 @@ class CliTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertIn(f"EPUB retained at {output}", stderr)
 
+    def test_retry_instruction_retains_explicit_configuration(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("cli.main.fetch_html", return_value=("html", "https://openai.com/article")), \
+                patch("cli.main.extract_article", return_value=self.article()), \
+                patch("cli.main.send_to_kindle", side_effect=ArticleError("SMTP unavailable")):
+            config = Path(directory) / "custom configuration.env"
+            config.write_text("")
+            output = Path(directory) / "article.epub"
+            code, _, stderr = self.invoke("convert", "https://openai.com/article", "--output", str(output),
+                                           "--send", "--config", str(config))
+        self.assertEqual(1, code)
+        self.assertIn("--config", stderr)
+        self.assertIn(str(config), stderr)
+
     def test_submission_reports_acceptance_not_delivery(self):
         with tempfile.TemporaryDirectory() as directory, \
                 patch("cli.main.fetch_html", return_value=("html", "https://openai.com/article")), \

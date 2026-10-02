@@ -151,7 +151,10 @@ def submit(article, output: Path, recipient: str, reporter: Reporter) -> None:
         send_to_kindle(article, output, recipient)
     except (ArticleError, OSError, ValueError) as error:
         import shlex
-        retry = shlex.join(["article-to-kindle", "send", str(output), "--to", recipient])
+        retry_args = ["article-to-kindle", "send", str(output), "--to", recipient]
+        if os.environ.get(CONFIG_FILE):
+            retry_args.extend(["--config", os.environ[CONFIG_FILE]])
+        retry = shlex.join(retry_args)
         raise ArticleError(
             f"Kindle submission failed. EPUB retained at {output}. {error}\n"
             f"Do not retry blindly: SMTP acceptance may be uncertain. Once safe, retry with:\n{retry}"
