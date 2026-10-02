@@ -75,15 +75,17 @@ def without_emojis(value: str) -> str:
     return EMOJI_RE.sub("", value)
 
 
-def epub_xhtml(article: Article) -> str:
+def epub_xhtml(article: Article, *, include_source_link: bool = True) -> str:
     title = without_emojis(article.title)
     author = without_emojis(article.author)
     source_url = without_emojis(article.source_url)
     content_html = without_emojis(article.content_html)
+    source = (f'<a href="{escape(source_url, quote=True)}">{escape(source_url)}</a>'
+              if include_source_link else escape(source_url))
     return f'''<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>{escape(title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
-<body><article><h1 class="title">{escape(title)}</h1><p class="byline">{escape(author)}</p>{content_html}<p class="source">Source: <a href="{escape(source_url, quote=True)}">{escape(source_url)}</a></p></article></body></html>'''
+<body><article><h1 class="title">{escape(title)}</h1><p class="byline">{escape(author)}</p>{content_html}<p class="source">Source: {source}</p></article></body></html>'''
 
 
 def nav_xhtml(article: Article) -> str:
@@ -94,7 +96,7 @@ def nav_xhtml(article: Article) -> str:
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>Contents</title></head><body><nav epub:type="toc" id="toc" xmlns:epub="http://www.idpf.org/2007/ops"><h1>Contents</h1><ol><li><a href="article.xhtml">{escape(title)}</a></li>{items}</ol></nav></body></html>'''
 
 
-def write_epub(article: Article, destination: Path) -> None:
+def write_epub(article: Article, destination: Path, *, include_source_link: bool = True) -> None:
     identifier = uuid.uuid5(uuid.NAMESPACE_URL, article.source_url)
     title = without_emojis(article.title)
     author = without_emojis(article.author)
@@ -116,7 +118,7 @@ def write_epub(article: Article, destination: Path) -> None:
             book.writestr("META-INF/container.xml", container)
             book.writestr("OEBPS/content.opf", opf)
             book.writestr("OEBPS/style.css", CSS)
-            book.writestr("OEBPS/article.xhtml", epub_xhtml(article))
+            book.writestr("OEBPS/article.xhtml", epub_xhtml(article, include_source_link=include_source_link))
             book.writestr("OEBPS/nav.xhtml", nav_xhtml(article))
             for asset in article.images:
                 book.writestr(f"OEBPS/{asset.href}", asset.data)

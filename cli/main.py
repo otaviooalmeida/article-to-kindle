@@ -66,7 +66,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, help="Use this .env file (shell variables take precedence)")
     commands = parser.add_subparsers(dest="command", required=True)
     convert = commands.add_parser("convert", help="Create an EPUB from a public supported article URL")
-    convert.add_argument("url", help="Public article URL on a supported host (see README)")
+    convert.add_argument("url", nargs="?", help="Public article URL on a supported host (see README)")
+    saved = convert.add_mutually_exclusive_group()
+    saved.add_argument("--html", metavar="FILE", help="Saved UTF-8 HTML file, or - for stdin (requires --source-url)")
+    saved.add_argument("--capture", metavar="FILE", help="Article Capture JSON file, or - for stdin")
+    convert.add_argument("--source-url", help="Original supported article URL for saved HTML and relative assets")
+    convert.add_argument("--title", help="Override the Reading Copy title")
+    convert.add_argument("--author", help="Override the author")
+    convert.add_argument("--no-images", action="store_true", help="Omit images without downloading them")
+    convert.add_argument("--no-links", action="store_true", help="Keep article and source-link text without clickable URLs")
     convert.add_argument("-o", "--output", type=Path, help="Where to write the EPUB (never overwrites)")
     delivery = convert.add_mutually_exclusive_group()
     delivery.add_argument("--send", action="store_true", help="Submit the EPUB through SMTP")
@@ -164,16 +172,37 @@ def run(argv: list[str] | None = None) -> int:
         article = read_epub_metadata(args.epub)
         submit(article, args.epub, recipient)
         return 0
+    if sum(bool(value) for value in (args.url, args.html, args.capture)) != 1:
+        parser.error("convert requires exactly one URL, --html FILE, or --capture FILE")
+    if args.html and not args.source_url:
+        parser.error("--html requires --source-url")
+    if args.source_url and not args.html:
+        parser.error("--source-url is only valid with --html")
     if args.to is not None and not args.send:
         parser.error("--to requires --send")
     recipient = submission_settings(args.to)[2] if args.send else None
-    print("Fetching article…", file=sys.stderr)
-    page_html, final_url = fetch_html(args.url)
+    title, author = args.title, args.author
+    if args.html or args.capture:
+        from cli.sources import read_capture, read_input
+        print("Loading saved article…", file=sys.stderr)
+        if args.capture:
+            capture = read_capture(args.capture)
+            page_html, final_url = capture["html"], capture["sourceUrl"]
+            title = capture["title"] if title is None else title
+            author = capture["author"] if author is None else author
+        else:
+            page_html, final_url = read_input(args.html), args.source_url
+    else:
+        print("Fetching article…", file=sys.stderr)
+        page_html, final_url = fetch_html(args.url)
     print("Extracting article…", file=sys.stderr)
+    from backend.reading_copy import prepare_html
+    page_html = prepare_html(page_html, final_url, title=title, author=author,
+                             include_images=not args.no_images, include_links=not args.no_links)
     article = extract_article(page_html, final_url)
     output = available_output(article, args.output)
     print("Creating EPUB…", file=sys.stderr)
-    write_epub(article, output)
+    write_epub(article, output, include_source_link=not args.no_links)
     print(f"Title: {article.title}\nAuthor: {article.author}\nImages: {len(article.images)}\nCreated: {output}")
     for warning in article.warnings:
         print(f"warning: {warning}", file=sys.stderr)

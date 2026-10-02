@@ -71,6 +71,21 @@ Without `--output`, the EPUB is saved under `outputs/`. Use `--output article.ep
 
 Progress and content warnings appear on stderr; the title, author, image count, and saved path appear on stdout. `--debug` includes tracebacks. If submission fails, the EPUB is retained. Do not retry blindly after an uncertain SMTP result: Amazon delivery may still be pending.
 
+### Reading Copy preferences and saved inputs
+
+```bash
+./article_to_kindle.py convert URL --no-images --no-links --title 'Reading title' --author 'Ada'
+./article_to_kindle.py convert --html saved.html --source-url https://openai.com/article -o article.epub
+./article_to_kindle.py convert --capture capture.json -o article.epub
+./article_to_kindle.py convert --html - --source-url https://openai.com/article --title 'Saved article' < saved.html
+```
+
+`--no-images` omits images before extraction, so they are not downloaded. `--no-links` preserves link text and plain-text source attribution without clickable URLs in the article (EPUB navigation still works). Defaults retain images and links. Metadata overrides are also available for saved inputs.
+
+Saved HTML must be UTF-8, within 10 MiB, and supplied with its original supported `--source-url` to resolve relative assets. Article Capture JSON requires non-empty string `title`, `author`, `sourceUrl`, and `html` fields; use `--capture -` for stdin. Its metadata is preserved unless overridden. Extra fields such as `kindleEmail` are ignored: submission always requires explicit CLI intent and local configuration. Image retrieval can still use the network unless `--no-images` is set.
+
+URL conversion fetches public HTML, not a browser-rendered page. For JavaScript-rendered or session-dependent Available Article Content, use browser capture. Neither workflow transfers cookies or bypasses paywalls. Saved capture input is supported, but the extension does not yet provide a capture-JSON export button.
+
 ### Setup and diagnostics
 
 `setup` asks for the extension origin, generates a strong pairing token, and optionally collects SMTP settings using a hidden password prompt. It never submits an article or sends a test email. Existing files require explicit `--force`; comments and unrelated settings are preserved. Config files are created with private permissions (0600 on POSIX; protect the containing folder with appropriate ACLs on Windows). Copy the token from the file into extension Settings.
