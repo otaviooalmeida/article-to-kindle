@@ -15,12 +15,7 @@ def use_project_venv() -> None:
 use_project_venv()
 
 from cli.main import main
-from backend.errors import ArticleError
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except ArticleError as error:
-        print(f"error: {error}", file=sys.stderr)
-        raise SystemExit(1)
+    raise SystemExit(main())

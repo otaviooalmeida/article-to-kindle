@@ -1,0 +1,87 @@
+"""CLI contract tests: no real article fetches or SMTP submissions."""
+
+import io
+import os
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+from unittest.mock import patch
+
+from backend.errors import ArticleError
+from backend.models import Article
+from cli.main import main
+
+
+class CliTest(unittest.TestCase):
+    def invoke(self, *args):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(list(args))
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def article(self):
+        return Article("Title", "Ada", "https://openai.com/article", "<p>content</p>", [], [],
+                       ["1 formula(s) retained as text", "1 image(s) omitted"])
+
+    def test_conversion_summary_and_warnings(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("cli.main.fetch_html", return_value=("html", "https://openai.com/article")), \
+                patch("cli.main.extract_article", return_value=self.article()):
+            output = Path(directory) / "article.epub"
+            code, stdout, stderr = self.invoke("https://openai.com/article", "--output", str(output))
+            self.assertTrue(output.is_file())
+        self.assertEqual(0, code)
+        self.assertIn("Title: Title", stdout)
+        self.assertIn("Author: Ada", stdout)
+        self.assertIn("Images: 0", stdout)
+        self.assertIn("warning: 1 image(s) omitted", stderr)
+        self.assertIn("Fetching article", stderr)
+
+    def test_expected_error_is_concise_and_debug_shows_traceback(self):
+        with patch("cli.main.fetch_html", side_effect=OSError("network unavailable")):
+            code, _, stderr = self.invoke("https://openai.com/article")
+            self.assertEqual(1, code)
+            self.assertIn("error: network unavailable", stderr)
+            self.assertNotIn("Traceback", stderr)
+            _, _, stderr = self.invoke("https://openai.com/article", "--debug")
+            self.assertIn("Traceback", stderr)
+
+    def test_submission_failure_preserves_output(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("cli.main.fetch_html", return_value=("html", "https://openai.com/article")), \
+                patch("cli.main.extract_article", return_value=self.article()), \
+                patch("cli.main.send_to_kindle", side_effect=ArticleError("SMTP unavailable")):
+            output = Path(directory) / "article.epub"
+            code, _, stderr = self.invoke("https://openai.com/article", "--output", str(output), "--send")
+            self.assertTrue(output.is_file())
+        self.assertEqual(1, code)
+        self.assertIn(f"EPUB retained at {output}", stderr)
+
+    def test_submission_reports_acceptance_not_delivery(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("cli.main.fetch_html", return_value=("html", "https://openai.com/article")), \
+                patch("cli.main.extract_article", return_value=self.article()), \
+                patch("cli.main.send_to_kindle") as send, \
+                patch.dict(os.environ, {"KINDLE_EMAIL": "reader@kindle.com"}):
+            code, stdout, _ = self.invoke("https://openai.com/article", "--output",
+                                          str(Path(directory) / "article.epub"), "--send")
+        self.assertEqual(0, code)
+        send.assert_called_once()
+        self.assertIn("SMTP accepted", stdout)
+        self.assertIn("Amazon delivery pending", stdout)
+
+    def test_existing_output_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("cli.main.fetch_html", return_value=("html", "https://openai.com/article")), \
+                patch("cli.main.extract_article", return_value=self.article()):
+            output = Path(directory) / "article.epub"
+            output.write_bytes(b"keep me")
+            code, _, stderr = self.invoke("https://openai.com/article", "--output", str(output))
+            self.assertEqual(b"keep me", output.read_bytes())
+        self.assertEqual(1, code)
+        self.assertIn("already exists", stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

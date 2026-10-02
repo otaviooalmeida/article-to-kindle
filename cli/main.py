@@ -50,7 +50,7 @@ def self_test() -> None:
     print("self-test passed")
 
 
-def main() -> int:
+def run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("url", nargs="?", help="Public Medium or Towards Data Science article URL")
     parser.add_argument("--output", type=Path, help="Where to write the EPUB")
@@ -59,7 +59,8 @@ def main() -> int:
     delivery.add_argument("--dry-run", action="store_true", help="Create the EPUB without sending email")
     parser.add_argument("--self-test", action="store_true", help="Run the built-in EPUB check")
     parser.add_argument("--serve", action="store_true", help="Run the local API on 127.0.0.1:8765")
-    args = parser.parse_args()
+    parser.add_argument("--debug", action="store_true", help="Show tracebacks for failures")
+    args = parser.parse_args(argv)
     if args.self_test:
         self_test()
         return 0
@@ -72,22 +73,44 @@ def main() -> int:
         return 0
     if not args.url:
         parser.error("a URL is required unless --self-test or --serve is used")
+    print("Fetching article…", file=sys.stderr)
     page_html, final_url = fetch_html(args.url)
+    print("Extracting article…", file=sys.stderr)
     article = extract_article(page_html, final_url)
     output = available_output(article, args.output)
+    print("Creating EPUB…", file=sys.stderr)
     write_epub(article, output)
-    print(f"Created: {output}")
+    print(f"Title: {article.title}\nAuthor: {article.author}\nImages: {len(article.images)}\nCreated: {output}")
+    for warning in article.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
     if args.send:
-        send_to_kindle(article, output)
-        print(f"Sent to: {os.environ[KINDLE_EMAIL]}")
+        print("Submitting to Kindle…", file=sys.stderr)
+        try:
+            send_to_kindle(article, output)
+        except (ArticleError, OSError, ValueError) as error:
+            raise ArticleError(f"Kindle submission failed. EPUB retained at {output}. {error}") from error
+        print(f"SMTP accepted for {os.environ[KINDLE_EMAIL]}; Amazon delivery pending.")
     elif args.dry_run:
         print("Dry run: email not sent.")
     return 0
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> int:
+    """Run the CLI with concise expected errors, or tracebacks with --debug."""
+    argv = list(sys.argv[1:] if argv is None else argv)
     try:
-        raise SystemExit(main())
-    except ArticleError as error:
-        print(f"error: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        return run(argv)
+    except (ArticleError, OSError, ValueError) as error:
+        if "--debug" in argv:
+            import traceback
+            traceback.print_exc()
+        else:
+            print(f"error: {error}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
