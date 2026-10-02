@@ -33,7 +33,7 @@ def extract_article(html, url):
     return extract(html, url)
 
 
-def available_output(article, requested: Path | None) -> Path:
+def available_output(article, requested: Path | None, output_dir: Path | None = None) -> Path:
     if requested:
         if requested.exists():
             raise ArticleError(f"Output already exists: {requested}")
@@ -42,8 +42,8 @@ def available_output(article, requested: Path | None) -> Path:
         return requested
     from backend.extractor import slugify
     stem = f"{slugify(article.title)}-{hashlib.sha256(article.source_url.encode()).hexdigest()[:8]}"
-    output_dir = Path.cwd() / "outputs"
-    output_dir.mkdir(exist_ok=True)
+    output_dir = output_dir or Path.cwd() / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
     candidate = output_dir / f"{stem}.epub"
     index = 2
     while candidate.exists():
@@ -88,6 +88,15 @@ def build_parser() -> argparse.ArgumentParser:
     delivery.add_argument("--send", action="store_true", help="Submit the EPUB through SMTP")
     delivery.add_argument("--dry-run", action="store_true", help="Create an EPUB without email; identical to the default")
     convert.add_argument("--to", help="Override KINDLE_EMAIL (requires --send)")
+    batch = commands.add_parser("batch", help="Convert a URL list sequentially, continuing after individual failures")
+    batch.add_argument("input", help="UTF-8 URL list file, or - for stdin; one URL per line")
+    batch.add_argument("--output-dir", type=Path, default=Path("outputs"), help="Directory for generated EPUBs (default: outputs)")
+    batch.add_argument("--no-images", action="store_true", help="Omit images without downloading them")
+    batch.add_argument("--no-links", action="store_true", help="Keep link text without clickable URLs")
+    batch_delivery = batch.add_mutually_exclusive_group()
+    batch_delivery.add_argument("--send", action="store_true", help="Explicitly submit each generated EPUB")
+    batch_delivery.add_argument("--dry-run", action="store_true", help="Create EPUBs without email; identical to the default")
+    batch.add_argument("--to", help="Override KINDLE_EMAIL (requires --send)")
     send = commands.add_parser("send", help="Submit an existing EPUB without fetching its article again")
     send.add_argument("epub", type=Path, help="Existing EPUB file")
     send.add_argument("--to", help="Override KINDLE_EMAIL")
@@ -125,7 +134,7 @@ def normalize_argv(argv: list[str], parser: argparse.ArgumentParser) -> list[str
         else:
             break
     first = argv[index] if index < len(argv) else None
-    if first is None or first in {"-h", "--help", "--version", "convert", "send", "serve", "self-test", "doctor", "setup"}:
+    if first is None or first in {"-h", "--help", "--version", "convert", "batch", "send", "serve", "self-test", "doctor", "setup"}:
         return argv
     return ["convert", *argv]
 
@@ -192,6 +201,11 @@ def run(argv: list[str], reporter: Reporter) -> int:
         reporter.result.update(title=article.title, author=article.author, sourceUrl=article.source_url)
         submit(article, args.epub, recipient, reporter)
         return 0
+    if args.command == "batch":
+        if args.to is not None and not args.send:
+            parser.error("--to requires --send")
+        recipient = submission_settings(args.to)[2] if args.send else None
+        return convert_batch(args, reporter, recipient)
     if sum(bool(value) for value in (args.url, args.html, args.capture)) != 1:
         parser.error("convert requires exactly one URL, --html FILE, or --capture FILE")
     if args.html and not args.source_url:
@@ -200,7 +214,14 @@ def run(argv: list[str], reporter: Reporter) -> int:
         parser.error("--source-url is only valid with --html")
     if args.to is not None and not args.send:
         parser.error("--to requires --send")
+    if args.title is not None and (not args.title.strip() or any(char in args.title for char in "\r\n")):
+        parser.error("--title must be a non-empty single-line title")
     recipient = submission_settings(args.to)[2] if args.send else None
+    convert_one(args, reporter, recipient)
+    return 0
+
+
+def convert_one(args, reporter: Reporter, recipient: str | None = None, output_dir: Path | None = None) -> None:
     title, author = args.title, args.author
     if args.html or args.capture:
         from cli.sources import read_capture, read_input
@@ -220,7 +241,7 @@ def run(argv: list[str], reporter: Reporter) -> int:
     page_html = prepare_html(page_html, final_url, title=title, author=author,
                              include_images=not args.no_images, include_links=not args.no_links)
     article = extract_article(page_html, final_url)
-    output = available_output(article, args.output)
+    output = available_output(article, args.output, output_dir)
     reporter.progress("Creating EPUB…")
     write_epub(article, output, include_source_link=not args.no_links)
     reporter.article(article, output)
@@ -228,7 +249,43 @@ def run(argv: list[str], reporter: Reporter) -> int:
         submit(article, output, recipient, reporter)
     elif args.dry_run:
         reporter.notice("Dry run: EPUB created; email not sent (same as the default).")
-    return 0
+
+
+def convert_batch(args, reporter: Reporter, recipient: str | None) -> int:
+    from cli.batch import read_urls
+    urls = read_urls(args.input)
+    output_dir = args.output_dir.expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results = []
+    reporter.result.update(results=results, total=len(urls), succeeded=0, failed=0)
+    for index, url in enumerate(urls, start=1):
+        reporter.progress(f"Article {index}/{len(urls)}: {url}")
+        item = Reporter(json_mode=reporter.json_mode)
+        item.result.update(command="convert", input=url)
+        results.append(item.result)
+        options = argparse.Namespace(url=url, html=None, capture=None, title=None, author=None,
+                                     no_images=args.no_images, no_links=args.no_links,
+                                     output=None, send=args.send, dry_run=args.dry_run)
+        try:
+            convert_one(options, item, recipient, output_dir)
+            item.result["exitCode"] = 0
+            reporter.result["succeeded"] += 1
+        except (ArticleError, OSError, ValueError, ImportError) as error:
+            item.error(error)
+            item.result["exitCode"] = 1
+            reporter.result["failed"] += 1
+            if args.debug:
+                import traceback
+                traceback.print_exc()
+        except KeyboardInterrupt:
+            item.error(ArticleError("Interrupted."), code="interrupted")
+            item.result["exitCode"] = 130
+            reporter.result["failed"] += 1
+            raise
+    succeeded, failed = reporter.result["succeeded"], reporter.result["failed"]
+    reporter.notice(f"Batch complete: {succeeded} succeeded, {failed} failed.")
+    reporter.result["status"] = "partial" if succeeded and failed else "error" if failed else "ok"
+    return 3 if succeeded and failed else 1 if failed else 0
 
 
 def main(argv: list[str] | None = None) -> int:

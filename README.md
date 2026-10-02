@@ -101,9 +101,20 @@ Use `--config FILE` before or after a command, or set `ARTICLE_TO_KINDLE_CONFIG`
 
 ### Structured output and exit codes
 
-Add `--json` before or after `convert`, `send`, `doctor`, or `self-test`. Stdout contains one JSON object with `schemaVersion: 1`, `command`, `status`, and `exitCode`; conversion results also include metadata, warnings, output path, and submission state. Failures include an `error` object with `code` and `message`; a failed submission retains its saved output path. `smtp_accepted` is not proof of Kindle Delivery. Progress, warnings, and `--debug` tracebacks stay on stderr. Interactive `setup` and long-running `serve` reject `--json`. Help and version remain plain text.
+Add `--json` before or after `convert`, `batch`, `send`, `doctor`, or `self-test`. Stdout contains one JSON object with `schemaVersion: 1`, `command`, `status`, and `exitCode`; conversion results also include metadata, warnings, output path, and submission state. Failures include an `error` object with `code` and `message`; a failed submission retains its saved output path. `smtp_accepted` is not proof of Kindle Delivery. Progress, warnings, and `--debug` tracebacks stay on stderr. Interactive `setup` and long-running `serve` reject `--json`. Help and version remain plain text.
 
-Exit codes: **0** success, **1** operational/diagnostic failure, **2** invalid arguments, **130** interruption.
+Exit codes: **0** success, **1** operational/diagnostic failure (including all batch articles failing), **2** invalid arguments, **3** batch partial failure, **130** interruption.
+
+### Batch conversion
+
+```bash
+article-to-kindle batch urls.txt --output-dir reading-copies --no-images --json
+article-to-kindle batch - --send --to reader@kindle.com < urls.txt
+```
+
+Supply one URL per line. Blank lines, `#` comment lines, and exact duplicate URLs are skipped; at most 1,000 unique URLs are accepted. Articles are processed sequentially, continuing after individual failures. Output names avoid existing files. JSON contains one aggregate object with per-article `results`, output paths, warnings, submission states, and success/failure counts. Interrupted batches retain completed results.
+
+Sending is opt-in and configuration is checked once before processing. A failed submission is never automatically retried; keep its EPUB and use `send` only once the uncertain SMTP result has been resolved. Re-running a batch can resend successful articles—use the per-article results to select retries.
 
 ## Checks
 
