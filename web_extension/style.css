@@ -279,18 +279,20 @@ code {
   color: var(--ink-muted);
   font-size: 12px;
 }
-.preview-toolbar #edit-mode {
+.preview-options #edit-mode {
   background: transparent;
   border-color: var(--rule-strong);
   color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
   min-height: 36px;
   padding: 6px 13px;
 }
-.preview-toolbar #edit-mode:hover:not(:disabled) {
+.preview-options #edit-mode:hover:not(:disabled) {
   background: var(--surface-raised);
   border-color: #7b8686;
 }
-.preview-toolbar #edit-mode[aria-pressed="true"] {
+.preview-options #edit-mode[aria-pressed="true"] {
   background: var(--accent-wash);
   border-color: var(--accent);
   color: #ffd0c1;
@@ -410,7 +412,7 @@ code {
   padding: 0;
 }
 .amazon-setup {
-  background: var(--accent-wash);
+  background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: 3px;
   padding: 0 13px;
@@ -442,11 +444,12 @@ code {
 .amazon-setup[open] > summary::after { transform: rotate(225deg); }
 .amazon-setup-body { padding: 2px 0 16px; }
 .amazon-setup-body p {
-  color: var(--ink-muted);
+  color: var(--ink);
   font-size: 12px;
   line-height: 1.6;
   margin: 9px 0;
 }
+.amazon-setup-body strong { color: var(--accent-strong); }
 .amazon-setup-body > a { display: inline-block; font-size: 12px; font-weight: 600; margin: 5px 0; }
 .delivery-card h2 {
   border: 0;
@@ -487,6 +490,7 @@ code {
 .download-card #download:hover:not(:disabled) { background: var(--accent-wash); border-color: var(--accent-strong); }
 .download-card #download:disabled { background: #211b1a; border-color: #51403b; color: var(--disabled-ink); }
 .send-card .help-text { margin-top: 12px; }
+.send-card .kindle-email-help { margin-top: 7px; }
 #status.status-message {
   border-top: 1px solid var(--rule);
   color: var(--ink-muted);
@@ -768,7 +772,7 @@ code {
     width: 100%;
   }
   .preview-toolbar button, .preview-toolbar a { font-size: 11px; }
-  .preview-toolbar #edit-mode { min-height: 32px; padding: 4px 10px; }
+  .preview-options #edit-mode { min-height: 32px; padding: 4px 10px; }
   .preview-toolbar .link { min-height: 32px; }
   .preview-label { padding-right: 9px; }
   .preview-workspace { gap: 38px; padding: 27px 17px 54px; }

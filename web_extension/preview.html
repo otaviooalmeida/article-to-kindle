@@ -13,7 +13,6 @@
     <h1 class="app-brand">Article to Kindle</h1>
     <nav class="preview-toolbar" aria-label="Article preview controls">
       <span class="preview-label">Preview</span>
-      <button id="edit-mode" type="button" aria-pressed="false" disabled>Edit</button>
       <a id="original-article" class="link" target="_blank" rel="noopener" hidden>View original article</a>
       <button id="options" class="link" type="button">Settings</button>
     </nav>
@@ -26,6 +25,7 @@
           <p id="article-author"></p>
         </header>
         <div class="preview-options" aria-label="Reading Copy options">
+          <button id="edit-mode" type="button" aria-pressed="false" disabled>Edit</button>
           <label class="switch-option">
             <input id="include-images" type="checkbox" checked>
             <span class="switch-track" aria-hidden="true"></span>
@@ -59,9 +59,9 @@
     </section>
     <aside class="delivery-panel" aria-label="Kindle delivery and download">
       <details class="delivery-card amazon-setup">
-        <summary>First time using Article to Kindle? Setup Amazon delivery.</summary>
+        <summary>First time using Article to Kindle? <br> Setup Amazon delivery.</summary>
         <div class="amazon-setup-body">
-          <p>Add <strong>articletokindle@gmail.com</strong> to Amazon’s <strong>Approved Personal Document Email List</strong>. This approves the sending address; enter your Kindle destination address below.</p>
+          <p>Add the sending address <strong>articletokindle@gmail.com</strong> to Amazon’s <strong>Approved Personal Document Email List</strong>. Then enter your Kindle email below.</p>
           <a id="amazon-settings" href="https://www.amazon.com/hz/mycd/myx#/home/settings/payment" target="_blank" rel="noopener">Open Amazon Personal Document Settings</a>
           <p class="help-text">After signing in, open Preferences → Personal Document Settings → Approved Personal Document Email List → Add a new email address. This must match the local server’s <code>SMTP_FROM</code> address.</p>
           <a class="help-link" href="https://www.amazon.com/gp/help/customer/display.html?nodeId=GX9XLEVV8G4DB28H" target="_blank" rel="noopener">Amazon instructions</a>
@@ -73,6 +73,7 @@
         <input id="kindle-email" type="email" autocomplete="email" placeholder="yourname@kindle.com" required>
         <button id="send" disabled>Send to Kindle</button>
         <p class="help-text">Enter the Kindle email address from your Amazon account, not your Amazon sign-in address.</p>
+        <p class="help-text kindle-email-help">Don’t know your Kindle email? <a class="help-link" href="https://www.amazon.com.br/hz/mycd/preferences/myx#/home/settings/payment" target="_blank" rel="noopener">Find it in Amazon settings</a>, then scroll to the bottom.</p>
       </section>
       <section class="delivery-card download-card">
         <h2>Download</h2>
