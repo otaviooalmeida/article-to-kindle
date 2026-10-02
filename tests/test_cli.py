@@ -103,9 +103,8 @@ class CliTest(unittest.TestCase):
         for args in (("--serve", "--self-test"), ("serve", "--send"),
                      ("--self-test", "https://openai.com/article"),
                      ("convert", "https://openai.com/article", "--to", "reader@kindle.com")):
-            with self.subTest(args=args), self.assertRaises(SystemExit) as raised:
-                self.invoke(*args)
-            self.assertEqual(2, raised.exception.code)
+            with self.subTest(args=args):
+                self.assertEqual(2, self.invoke(*args)[0])
 
     def test_send_existing_epub_never_fetches(self):
         from backend.epub import write_epub

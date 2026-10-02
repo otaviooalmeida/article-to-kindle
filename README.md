@@ -99,6 +99,12 @@ URL conversion fetches public HTML, not a browser-rendered page. For JavaScript-
 
 Use `--config FILE` before or after a command, or set `ARTICLE_TO_KINDLE_CONFIG`. Shell settings take precedence. Source checkouts default to the repository's `.env`; installed commands use `$XDG_CONFIG_HOME/article-to-kindle/.env` (normally `~/.config/article-to-kindle/.env`) or `%APPDATA%/article-to-kindle/.env` on Windows. `serve` remains manually started, loopback-only, and protected by the token and extension origin.
 
+### Structured output and exit codes
+
+Add `--json` before or after `convert`, `send`, `doctor`, or `self-test`. Stdout contains one JSON object with `schemaVersion: 1`, `command`, `status`, and `exitCode`; conversion results also include metadata, warnings, output path, and submission state. Failures include an `error` object with `code` and `message`; a failed submission retains its saved output path. `smtp_accepted` is not proof of Kindle Delivery. Progress, warnings, and `--debug` tracebacks stay on stderr. Interactive `setup` and long-running `serve` reject `--json`. Help and version remain plain text.
+
+Exit codes: **0** success, **1** operational/diagnostic failure, **2** invalid arguments, **130** interruption.
+
 ## Checks
 
 ```bash

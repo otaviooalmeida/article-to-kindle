@@ -15,6 +15,12 @@ from backend.delivery import send_to_kindle, submission_settings
 from backend.epub import read_epub_metadata, write_epub
 from backend.errors import ArticleError
 from cli import __version__
+from cli.output import Reporter, UsageError
+
+
+class CliParser(argparse.ArgumentParser):
+    def error(self, message):
+        raise UsageError(message, self.format_usage())
 
 
 def fetch_html(url):
@@ -58,14 +64,14 @@ def self_test() -> None:
         with zipfile.ZipFile(epub) as book:
             assert book.read("mimetype") == b"application/epub+zip"
             assert "OEBPS/article.xhtml" in book.namelist()
-    print("self-test passed")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__, epilog="Legacy URL, --serve, and --self-test invocations remain supported.")
+    parser = CliParser(description=__doc__, epilog="Legacy URL, --serve, and --self-test invocations remain supported.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--debug", action="store_true", help="Show tracebacks for failures")
     parser.add_argument("--config", type=Path, help="Use this .env file (shell variables take precedence)")
+    parser.add_argument("--json", action="store_true", help="Write one structured result to stdout (not setup/serve)")
     commands = parser.add_subparsers(dest="command", required=True)
     convert = commands.add_parser("convert", help="Create an EPUB from a public supported article URL")
     convert.add_argument("url", nargs="?", help="Public article URL on a supported host (see README)")
@@ -97,6 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
     for command in commands.choices.values():
         command.add_argument("--debug", action="store_true", default=argparse.SUPPRESS, help="Show tracebacks for failures")
         command.add_argument("--config", type=Path, default=argparse.SUPPRESS, help="Use this .env file")
+        command.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Write one structured result to stdout")
     return parser
 
 
@@ -109,7 +116,7 @@ def normalize_argv(argv: list[str], parser: argparse.ArgumentParser) -> list[str
         return [command, *[value for value in argv if value != legacy[0]]]
     index = 0
     while index < len(argv):
-        if argv[index] == "--debug":
+        if argv[index] in {"--debug", "--json"}:
             index += 1
         elif argv[index] == "--config":
             index += 2
@@ -123,8 +130,9 @@ def normalize_argv(argv: list[str], parser: argparse.ArgumentParser) -> list[str
     return ["convert", *argv]
 
 
-def submit(article, output: Path, recipient: str) -> None:
-    print("Submitting to Kindle…", file=sys.stderr)
+def submit(article, output: Path, recipient: str, reporter: Reporter) -> None:
+    reporter.result.update(output=str(output), recipient=recipient, submission="unconfirmed")
+    reporter.progress("Submitting to Kindle…")
     try:
         send_to_kindle(article, output, recipient)
     except (ArticleError, OSError, ValueError) as error:
@@ -134,12 +142,17 @@ def submit(article, output: Path, recipient: str) -> None:
             f"Kindle submission failed. EPUB retained at {output}. {error}\n"
             f"Do not retry blindly: SMTP acceptance may be uncertain. Once safe, retry with:\n{retry}"
         ) from error
-    print(f"SMTP accepted for {recipient}; Amazon delivery pending.")
+    reporter.result["submission"] = "smtp_accepted"
+    reporter.notice(f"SMTP accepted for {recipient}; Amazon delivery pending.")
 
 
-def run(argv: list[str] | None = None) -> int:
+def run(argv: list[str], reporter: Reporter) -> int:
     parser = build_parser()
-    args = parser.parse_args(normalize_argv(list(sys.argv[1:] if argv is None else argv), parser))
+    args = parser.parse_args(normalize_argv(argv, parser))
+    reporter.json_mode = args.json
+    reporter.result["command"] = args.command
+    if args.json and args.command in {"setup", "serve"}:
+        parser.error("--json is not supported for interactive setup or the long-running serve command")
     path = (args.config or default_config_path()).expanduser()
     if args.command == "setup":
         from cli.setup import setup
@@ -156,12 +169,16 @@ def run(argv: list[str] | None = None) -> int:
         from cli.diagnostics import diagnose
         checks = diagnose(companion=args.companion, smtp=args.smtp or args.smtp_login,
                           smtp_login=args.smtp_login, recipient=args.to)
-        print(f"Configuration: {path}")
+        reporter.result.update(configuration=str(path), checks=checks)
+        reporter.notice(f"Configuration: {path}")
         for check in checks:
-            print(f"{'OK' if check['ok'] else 'FAIL'} {check['name']}: {check['message']}")
-        return 0 if all(check["ok"] for check in checks) else 1
+            reporter.notice(f"{'OK' if check['ok'] else 'FAIL'} {check['name']}: {check['message']}")
+        ok = all(check["ok"] for check in checks)
+        reporter.result["status"] = "ok" if ok else "error"
+        return 0 if ok else 1
     if args.command == "self-test":
         self_test()
+        reporter.notice("self-test passed")
         return 0
     if args.command == "serve":
         companion_settings()
@@ -172,7 +189,8 @@ def run(argv: list[str] | None = None) -> int:
     if args.command == "send":
         recipient = submission_settings(args.to)[2]
         article = read_epub_metadata(args.epub)
-        submit(article, args.epub, recipient)
+        reporter.result.update(title=article.title, author=article.author, sourceUrl=article.source_url)
+        submit(article, args.epub, recipient, reporter)
         return 0
     if sum(bool(value) for value in (args.url, args.html, args.capture)) != 1:
         parser.error("convert requires exactly one URL, --html FILE, or --capture FILE")
@@ -186,7 +204,7 @@ def run(argv: list[str] | None = None) -> int:
     title, author = args.title, args.author
     if args.html or args.capture:
         from cli.sources import read_capture, read_input
-        print("Loading saved article…", file=sys.stderr)
+        reporter.progress("Loading saved article…")
         if args.capture:
             capture = read_capture(args.capture)
             page_html, final_url = capture["html"], capture["sourceUrl"]
@@ -195,44 +213,47 @@ def run(argv: list[str] | None = None) -> int:
         else:
             page_html, final_url = read_input(args.html), args.source_url
     else:
-        print("Fetching article…", file=sys.stderr)
+        reporter.progress("Fetching article…")
         page_html, final_url = fetch_html(args.url)
-    print("Extracting article…", file=sys.stderr)
+    reporter.progress("Extracting article…")
     from backend.reading_copy import prepare_html
     page_html = prepare_html(page_html, final_url, title=title, author=author,
                              include_images=not args.no_images, include_links=not args.no_links)
     article = extract_article(page_html, final_url)
     output = available_output(article, args.output)
-    print("Creating EPUB…", file=sys.stderr)
+    reporter.progress("Creating EPUB…")
     write_epub(article, output, include_source_link=not args.no_links)
-    print(f"Title: {article.title}\nAuthor: {article.author}\nImages: {len(article.images)}\nCreated: {output}")
-    for warning in article.warnings:
-        print(f"warning: {warning}", file=sys.stderr)
+    reporter.article(article, output)
     if args.send:
-        submit(article, output, recipient)
+        submit(article, output, recipient, reporter)
     elif args.dry_run:
-        print("Dry run: EPUB created; email not sent (same as the default).")
+        reporter.notice("Dry run: EPUB created; email not sent (same as the default).")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI with concise expected errors, or tracebacks with --debug."""
     argv = list(sys.argv[1:] if argv is None else argv)
+    reporter = Reporter(json_mode="--json" in argv)
     try:
-        return run(argv)
-    except (ArticleError, OSError, ValueError) as error:
+        code = run(argv, reporter)
+    except UsageError as error:
+        reporter.error(error, code="invalid_arguments")
+        code = 2
+    except (ArticleError, OSError, ValueError, ImportError) as error:
+        reporter.error(error)
         if "--debug" in argv:
             import traceback
             traceback.print_exc()
-        else:
-            print(f"error: {error}", file=sys.stderr)
-        return 1
+        code = 1
     except EOFError:
-        print("Setup cancelled: interactive input ended. No configuration was saved.", file=sys.stderr)
-        return 1
+        reporter.error(ArticleError("Setup cancelled: interactive input ended. No configuration was saved."), code="input_ended")
+        code = 1
     except KeyboardInterrupt:
-        print("Interrupted.", file=sys.stderr)
-        return 130
+        reporter.error(ArticleError("Interrupted."), code="interrupted")
+        code = 130
+    reporter.emit(code)
+    return code
 
 
 if __name__ == "__main__":

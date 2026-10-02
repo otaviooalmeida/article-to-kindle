@@ -66,9 +66,8 @@ class CliContentTest(unittest.TestCase):
         for args in (["convert"], ["convert", "--html", "file"],
                      ["convert", URL, "--html", "file", "--source-url", URL],
                      ["convert", URL, "--source-url", URL]):
-            with self.subTest(args=args), self.assertRaises(SystemExit) as raised:
-                self.invoke(args)
-            self.assertEqual(2, raised.exception.code)
+            with self.subTest(args=args):
+                self.assertEqual(2, self.invoke(args))
         for value in ({}, {"title": True}, [], "bad json"):
             with self.subTest(value=value), patch("sys.stdin", io.StringIO(json.dumps(value))):
                 with self.assertRaises(ArticleError):
