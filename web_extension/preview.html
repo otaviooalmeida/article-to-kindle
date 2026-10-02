@@ -8,41 +8,78 @@
   <script src="preview-core.js" defer></script>
   <script src="preview.js" defer></script>
 </head>
-<body class="preview-page">
+<body class="preview-page preview-mode">
   <header class="preview-header">
-    <div>
-      <h1>Preview Reading Copy</h1>
-      <p id="source" class="source-url"></p>
-    </div>
-    <button id="options" class="link">Settings</button>
+    <h1 class="app-brand">Article to Kindle</h1>
+    <nav class="preview-toolbar" aria-label="Article preview controls">
+      <span class="preview-label">Preview</span>
+      <button id="edit-mode" type="button" aria-pressed="false" disabled>Edit</button>
+      <a id="original-article" class="link" target="_blank" rel="noopener" hidden>View original article</a>
+      <button id="options" class="link" type="button">Settings</button>
+    </nav>
   </header>
-  <main class="preview-main">
-    <p id="status" role="status" aria-live="polite">Loading article preview…</p>
-    <fieldset id="editor" hidden>
-      <legend class="visually-hidden">Choose what to include in the Reading Copy</legend>
-      <div class="metadata-fields">
-        <label>Title<input id="title" type="text" required></label>
-        <label>Author<input id="author" type="text"></label>
-      </div>
-      <label class="option-row">
-        <input id="ignore-images" type="checkbox">
-        <span>Ignore images</span>
-      </label>
-      <p id="image-summary" class="help-text"></p>
-      <div class="selection-toolbar">
-        <label class="option-row">
-          <input id="select-all" type="checkbox" checked>
-          <span>Include all sections</span>
-        </label>
-        <span id="selection-count" class="help-text"></span>
-      </div>
-      <p class="help-text">Use the checkboxes beside each section to include or omit it. Green highlights will be included; red highlights will be omitted. You can edit text directly. Image thumbnails are not loaded here; included images are added when you create the Reading Copy.</p>
-      <div id="content" class="preview-content"></div>
-    </fieldset>
-    <div class="preview-actions">
-      <button id="download" disabled>Download EPUB</button>
-      <button id="send" disabled>Send to Kindle</button>
-    </div>
+  <main class="preview-workspace">
+    <section class="preview-column" aria-label="Reading Copy preview">
+      <article class="reader-article" aria-label="Reading Copy preview">
+        <header class="article-metadata">
+          <h2 id="article-title"></h2>
+          <p id="article-author"></p>
+        </header>
+        <div class="preview-options" aria-label="Reading Copy options">
+          <label class="switch-option">
+            <input id="include-images" type="checkbox" checked>
+            <span class="switch-track" aria-hidden="true"></span>
+            <span>Include images</span>
+          </label>
+          <label class="switch-option">
+            <input id="permit-links" type="checkbox" checked aria-label="Permit links and hrefs in the Reading Copy">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span>Permit links</span>
+          </label>
+          <span id="image-summary" class="option-summary"></span>
+          <span id="link-summary" class="option-summary"></span>
+        </div>
+        <fieldset id="editor" hidden>
+          <legend class="visually-hidden">Edit the Reading Copy</legend>
+          <div class="metadata-fields">
+            <label>Title<input id="title" type="text" required></label>
+            <label>Author<input id="author" type="text"></label>
+          </div>
+          <div class="selection-toolbar">
+            <label class="option-row">
+              <input id="select-all" type="checkbox" checked>
+              <span>Include all sections</span>
+            </label>
+            <span id="selection-count" class="help-text"></span>
+          </div>
+          <p class="help-text">Uncheck sections to omit them, or edit text directly. Included sections are marked in the margin; omitted sections are dashed.</p>
+        </fieldset>
+        <div id="content" class="preview-content"></div>
+      </article>
+    </section>
+    <aside class="delivery-panel" aria-label="Kindle delivery and download">
+      <details class="delivery-card amazon-setup">
+        <summary>First time using Article to Kindle? Setup Amazon delivery.</summary>
+        <div class="amazon-setup-body">
+          <p>Add <strong>articletokindle@gmail.com</strong> to Amazon’s <strong>Approved Personal Document Email List</strong>. This approves the sending address; enter your Kindle destination address below.</p>
+          <a id="amazon-settings" href="https://www.amazon.com/hz/mycd/myx#/home/settings/payment" target="_blank" rel="noopener">Open Amazon Personal Document Settings</a>
+          <p class="help-text">After signing in, open Preferences → Personal Document Settings → Approved Personal Document Email List → Add a new email address. This must match the local server’s <code>SMTP_FROM</code> address.</p>
+          <a class="help-link" href="https://www.amazon.com/gp/help/customer/display.html?nodeId=GX9XLEVV8G4DB28H" target="_blank" rel="noopener">Amazon instructions</a>
+        </div>
+      </details>
+      <section class="delivery-card send-card">
+        <h2>Send</h2>
+        <label for="kindle-email">Send to Kindle email</label>
+        <input id="kindle-email" type="email" autocomplete="email" placeholder="yourname@kindle.com" required>
+        <button id="send" disabled>Send to Kindle</button>
+        <p class="help-text">Enter the Kindle email address from your Amazon account, not your Amazon sign-in address.</p>
+      </section>
+      <section class="delivery-card download-card">
+        <h2>Download</h2>
+        <button id="download" disabled>Download EPUB</button>
+      </section>
+      <p id="status" class="status-message" role="status" aria-live="polite">Loading article preview…</p>
+    </aside>
   </main>
 </body>
 </html>

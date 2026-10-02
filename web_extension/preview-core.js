@@ -82,12 +82,20 @@
       placeholder.dataset.imageAlt = source.getAttribute("alt") || "";
       placeholder.setAttribute("role", "img");
       placeholder.setAttribute("aria-label", placeholder.dataset.imageAlt || "Article image");
-      const description = document.createElement("span");
-      description.className = "image-description";
-      description.textContent = placeholder.dataset.imageAlt || "Article image";
+      const thumbnail = document.createElement("img");
+      thumbnail.className = "image-thumbnail";
+      thumbnail.dataset.previewSource = src;
+      thumbnail.alt = placeholder.dataset.imageAlt || "Article image";
+      thumbnail.loading = "lazy";
+      thumbnail.decoding = "async";
+      thumbnail.referrerPolicy = "no-referrer";
       const state = document.createElement("span");
       state.className = "image-state";
-      placeholder.append(description, state);
+      thumbnail.addEventListener("error", () => {
+        placeholder.classList.add("image-unavailable");
+        state.textContent = "Image preview unavailable";
+      });
+      placeholder.append(thumbnail, state);
       target.append(placeholder);
       return;
     }
@@ -142,7 +150,7 @@
     return blocks;
   }
 
-  function renderArticle(capture, container) {
+  function renderArticle(capture, container, ignoreImages = false) {
     const parsed = new DOMParser().parseFromString(inertResourceHtml(capture.html), "text/html");
     const root = parsed.body.firstElementChild || parsed.body;
     const sourceBlocks = collectContentBlocks(root);
@@ -167,14 +175,14 @@
 
       const content = document.createElement("div");
       content.className = "editable-content";
-      content.contentEditable = "true";
+      content.contentEditable = "false";
       content.setAttribute("aria-label", `Editable article content, section ${index + 1}`);
       sources.forEach(source => appendSafeNode(source, content, capture.sourceUrl));
 
       block.append(label, content);
       container.append(block);
     });
-    updateContentPreviews(container, false);
+    updateContentPreviews(container, ignoreImages);
     return sourceBlocks.length;
   }
 
@@ -184,7 +192,7 @@
     })[character]);
   }
 
-  function serializeNode(node, baseUrl, ignoreImages) {
+  function serializeNode(node, baseUrl, ignoreImages, permitLinks) {
     if (node.nodeType === Node.TEXT_NODE) return escapeHtml(node.nodeValue);
     if (node.nodeType !== Node.ELEMENT_NODE) return "";
 
@@ -202,8 +210,8 @@
       return src ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(node.getAttribute("alt") || "")}">` : "";
     }
 
-    const children = [...node.childNodes].map(child => serializeNode(child, baseUrl, ignoreImages)).join("");
-    if (!ALLOWED_TAGS.has(tag)) return children;
+    const children = [...node.childNodes].map(child => serializeNode(child, baseUrl, ignoreImages, permitLinks)).join("");
+    if (!ALLOWED_TAGS.has(tag) || (tag === "a" && !permitLinks)) return children;
 
     let attributes = "";
     if (tag === "a") {
@@ -219,12 +227,12 @@
     return `<${tag}${attributes}>${children}</${tag}>`;
   }
 
-  function buildCapture(capture, container, title, author, ignoreImages) {
+  function buildCapture(capture, container, title, author, ignoreImages, permitLinks = true) {
     const blocks = [...container.querySelectorAll(".preview-block")];
     const html = blocks
       .filter(block => block.querySelector(".include-block").checked)
       .map(block => [...block.querySelector(".editable-content").childNodes]
-        .map(node => serializeNode(node, capture.sourceUrl, ignoreImages)).join(""))
+        .map(node => serializeNode(node, capture.sourceUrl, ignoreImages, permitLinks)).join(""))
       .join("");
     return {
       title: title.trim(),
@@ -242,7 +250,13 @@
       const block = image.closest(".preview-block");
       const included = block?.querySelector(".include-block").checked;
       const state = image.querySelector(".image-state");
-      state.textContent = !included ? "Omitted with this section" : ignoreImages ? "Will be omitted" : "Will be included (thumbnail not loaded)";
+      const thumbnail = image.querySelector(".image-thumbnail");
+      if (included && !ignoreImages && !thumbnail.hasAttribute("src")) {
+        thumbnail.src = thumbnail.dataset.previewSource;
+      }
+      if (!image.classList.contains("image-unavailable")) {
+        state.textContent = !included ? "Omitted with this section" : ignoreImages ? "Will be omitted" : "Will be included";
+      }
       image.classList.toggle("image-ignored", ignoreImages || !included);
     });
   }
