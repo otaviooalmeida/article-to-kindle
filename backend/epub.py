@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import uuid
 import zipfile
@@ -96,7 +97,7 @@ def nav_xhtml(article: Article) -> str:
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>Contents</title></head><body><nav epub:type="toc" id="toc" xmlns:epub="http://www.idpf.org/2007/ops"><h1>Contents</h1><ol><li><a href="article.xhtml">{escape(title)}</a></li>{items}</ol></nav></body></html>'''
 
 
-def write_epub(article: Article, destination: Path, *, include_source_link: bool = True) -> None:
+def write_epub(article: Article, destination: Path, *, include_source_link: bool = True, overwrite: bool = True) -> None:
     identifier = uuid.uuid5(uuid.NAMESPACE_URL, article.source_url)
     title = without_emojis(article.title)
     author = without_emojis(article.author)
@@ -124,8 +125,14 @@ def write_epub(article: Article, destination: Path, *, include_source_link: bool
                 book.writestr(f"OEBPS/{asset.href}", asset.data)
         if not zipfile.is_zipfile(temporary):
             raise ValueError("EPUB creation failed validation.")
-        temporary.replace(destination)
-        temporary = None
+        if overwrite:
+            temporary.replace(destination)
+            temporary = None
+        else:
+            try:
+                os.link(temporary, destination)
+            except FileExistsError as error:
+                raise ArticleError(f"Output already exists: {destination}") from error
     finally:
         if temporary and temporary.exists():
             temporary.unlink()

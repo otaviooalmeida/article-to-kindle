@@ -35,7 +35,8 @@ def extract_article(html, url):
 
 def available_output(article, requested: Path | None, output_dir: Path | None = None) -> Path:
     if requested:
-        if requested.exists():
+        requested = requested.expanduser()
+        if requested.exists() or requested.is_symlink():
             raise ArticleError(f"Output already exists: {requested}")
         if not requested.parent.is_dir():
             raise ArticleError(f"Output directory does not exist: {requested.parent}")
@@ -46,7 +47,7 @@ def available_output(article, requested: Path | None, output_dir: Path | None = 
     output_dir.mkdir(parents=True, exist_ok=True)
     candidate = output_dir / f"{stem}.epub"
     index = 2
-    while candidate.exists():
+    while candidate.exists() or candidate.is_symlink():
         candidate = output_dir / f"{stem}-{index}.epub"
         index += 1
     return candidate
@@ -243,7 +244,7 @@ def convert_one(args, reporter: Reporter, recipient: str | None = None, output_d
     article = extract_article(page_html, final_url)
     output = available_output(article, args.output, output_dir)
     reporter.progress("Creating EPUB…")
-    write_epub(article, output, include_source_link=not args.no_links)
+    write_epub(article, output, include_source_link=not args.no_links, overwrite=False)
     reporter.article(article, output)
     if args.send:
         submit(article, output, recipient, reporter)
