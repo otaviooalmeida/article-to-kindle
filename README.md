@@ -34,7 +34,7 @@ python3 -m venv .venv
 
 1. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the `web_extension/` directory.
 2. Open the extension settings and copy the displayed `chrome-extension://...` origin.
-3. Copy `.env.example` to `.env` and fill in the settings. The application loads `.env` automatically; shell variables take precedence.
+3. Copy `.env.example` to `.env` and fill in the local API and SMTP settings. The extension asks for the Kindle destination email in its Send panel; `KINDLE_EMAIL` remains the CLI `--send` default. The application loads `.env` automatically; shell variables take precedence.
 
 ```bash
 cp .env.example .env
@@ -48,7 +48,7 @@ cp .env.example .env
 ./article_to_kindle.py --serve
 ```
 
-6. Visit a supported article and open the extension. Choose **Preview & select content**, edit the Reading Copy, optionally check **Ignore images**, then choose **Download EPUB** or **Send to Kindle**.
+6. Visit a supported article and open the extension. The preview shows the article and images; use **Edit** to change text or select sections. The **Include images** and **Permit links** switches control EPUB content. Enter the Kindle destination address in the left Send panel. Before sending, approve `articletokindle@gmail.com` in Amazon Personal Document Settings and ensure the local SMTP `SMTP_FROM` address matches.
 
 The server listens only on `127.0.0.1:8765`. SMTP acceptance is a Kindle Submission, not proof that Amazon has added the document to the Kindle library. Email EPUBs are limited to 50 MiB.
 
