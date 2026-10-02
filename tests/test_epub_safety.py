@@ -32,7 +32,10 @@ class EpubSafetyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "missing.epub"
             output = Path(directory) / "article.epub"
-            output.symlink_to(target)
+            try:
+                output.symlink_to(target)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symlink creation is unavailable on this platform.")
             with self.assertRaisesRegex(ArticleError, "already exists"):
                 write_epub(self.article(), output, overwrite=False)
             self.assertTrue(output.is_symlink())

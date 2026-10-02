@@ -78,7 +78,10 @@ class ConfigurationTest(unittest.TestCase):
             with self.assertRaises(ArticleError):
                 save_config(path, {"KEY": "changed"}, force=False)
             link = Path(directory) / "link"
-            link.symlink_to(path)
+            try:
+                link.symlink_to(path)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symlink creation is unavailable on this platform.")
             with self.assertRaises(ArticleError):
                 save_config(link, {"KEY": "changed"}, force=True)
             self.assertEqual("value", read_dotenv(path)["KEY"])

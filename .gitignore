@@ -7,7 +7,6 @@ docs/agents
 AGENTS.md
 CONTEXT.md
 docs/
-tests/
 # C extensions
 *.so
 
