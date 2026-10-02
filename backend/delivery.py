@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import smtplib
 import ssl
+from email.errors import HeaderParseError
+from email.headerregistry import Address
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -11,14 +13,29 @@ from .config import KINDLE_EMAIL, SMTP_FROM, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT
 from .errors import ArticleError
 
 
-def send_to_kindle(article, epub: Path) -> None:
+def is_valid_email_address(value: str) -> bool:
+    if not isinstance(value, str) or len(value) > 254:
+        return False
+    try:
+        address = Address(addr_spec=value)
+    except (HeaderParseError, ValueError):
+        return False
+    return address.addr_spec == value and "." in address.domain
+
+
+def send_to_kindle(article, epub: Path, recipient: str | None = None) -> None:
     try:
         settings = smtp_settings()
         port = int(settings[SMTP_PORT])
     except (ValueError, TypeError) as error:
         raise ArticleError(str(error)) from error
+    recipient = (recipient or settings[KINDLE_EMAIL]).strip()
+    if not recipient:
+        raise ArticleError(f"Set {KINDLE_EMAIL} or enter a Kindle email address.")
+    if not is_valid_email_address(recipient):
+        raise ArticleError("Kindle recipient email address is invalid.")
     message = EmailMessage()
-    message["From"], message["To"], message["Subject"] = settings[SMTP_FROM], settings[KINDLE_EMAIL], article.title
+    message["From"], message["To"], message["Subject"] = settings[SMTP_FROM], recipient, article.title
     message.set_content(f"{article.title}\n\nSource: {article.source_url}")
     message.add_attachment(epub.read_bytes(), maintype="application", subtype="epub+zip", filename=epub.name)
     client = None

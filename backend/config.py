@@ -33,7 +33,7 @@ SMTP_FROM = "SMTP_FROM"
 SMTP_DEFAULT_PORT = 587
 MAX_CAPTURE_BYTES = 10 * 1024 * 1024
 MAX_EPUB_BYTES = 50 * 1024 * 1024
-SMTP_REQUIRED = (KINDLE_EMAIL, SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM)
+SMTP_REQUIRED = (SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM)
 
 
 def smtp_settings() -> dict[str, str]:
@@ -41,5 +41,6 @@ def smtp_settings() -> dict[str, str]:
     missing = [name for name, value in values.items() if not value]
     if missing:
         raise ValueError(f"Missing environment variables for --send: {', '.join(missing)}")
+    values[KINDLE_EMAIL] = os.environ.get(KINDLE_EMAIL, "")
     values[SMTP_PORT] = os.environ.get(SMTP_PORT, str(SMTP_DEFAULT_PORT))
     return values
