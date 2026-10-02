@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from .config import ALLOWED_ORIGIN, API_TOKEN, KINDLE_EMAIL, MAX_CAPTURE_BYTES, MAX_EPUB_BYTES
+from .config import ALLOWED_ORIGIN, API_TOKEN, KINDLE_EMAIL, MAX_CAPTURE_BYTES, MAX_EPUB_BYTES, load_dotenv
 from .delivery import is_valid_email_address, send_to_kindle
 from .epub import write_epub
 from .errors import ArticleError
@@ -57,6 +57,7 @@ class OriginMiddleware:
         return {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Article-To-Kindle-Origin", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Expose-Headers": "X-Article-Warnings"}
 
 
+load_dotenv()
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(OriginMiddleware)
 

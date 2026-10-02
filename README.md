@@ -60,6 +60,9 @@ The server listens only on `127.0.0.1:8765`. SMTP acceptance is a Kindle Submiss
 ./article_to_kindle.py send article.epub --to reader@kindle.com
 ./article_to_kindle.py serve
 ./article_to_kindle.py self-test
+./article_to_kindle.py doctor
+./article_to_kindle.py doctor --companion --smtp
+./article_to_kindle.py setup --config ~/.config/article-to-kindle/.env
 ```
 
 The original `./article_to_kindle.py URL`, `--serve`, and `--self-test` syntax remains supported. Incompatible modes are rejected rather than ignored. `--dry-run` creates an EPUB without sending; it is an explicit alias for the default conversion behavior, not a no-write simulation. `send` reads metadata from an existing EPUB and never fetches the Article Page again.
@@ -67,6 +70,14 @@ The original `./article_to_kindle.py URL`, `--serve`, and `--self-test` syntax r
 Without `--output`, the EPUB is saved under `outputs/`. Use `--output article.epub` for another path, or `--send` to submit it through SMTP. `--to reader@kindle.com` overrides `KINDLE_EMAIL` when sending. Submission configuration is checked before fetching, and EPUB attachments must not exceed 50 MiB.
 
 Progress and content warnings appear on stderr; the title, author, image count, and saved path appear on stdout. `--debug` includes tracebacks. If submission fails, the EPUB is retained. Do not retry blindly after an uncertain SMTP result: Amazon delivery may still be pending.
+
+### Setup and diagnostics
+
+`setup` asks for the extension origin, generates a strong pairing token, and optionally collects SMTP settings using a hidden password prompt. It never submits an article or sends a test email. Existing files require explicit `--force`; comments and unrelated settings are preserved. Config files are created with private permissions (0600 on POSIX; protect the containing folder with appropriate ACLs on Windows). Copy the token from the file into extension Settings.
+
+`doctor` checks Python and dependencies offline. Add `--companion` to check pairing and authenticated local health, `--smtp` to validate SMTP configuration and the default recipient, or `--smtp --to reader@kindle.com` to check another recipient. Only `--smtp-login` opens an SMTP connection and tests TLS/login; it never sends email or verifies Amazon sender approval. Tokens and passwords are redacted from diagnostics.
+
+Use `--config FILE` before or after a command, or set `ARTICLE_TO_KINDLE_CONFIG`. Shell settings take precedence. Source checkouts default to the repository's `.env`; installed commands use `$XDG_CONFIG_HOME/article-to-kindle/.env` (normally `~/.config/article-to-kindle/.env`) or `%APPDATA%/article-to-kindle/.env` on Windows. `serve` remains manually started, loopback-only, and protected by the token and extension origin.
 
 ## Checks
 
