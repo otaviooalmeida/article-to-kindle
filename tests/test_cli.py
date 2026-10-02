@@ -95,6 +95,42 @@ class CliTest(unittest.TestCase):
         fetch.assert_not_called()
         self.assertIn("error:", stderr)
 
+    def test_subcommands_and_legacy_modes(self):
+        with patch("cli.main.self_test") as check:
+            self.assertEqual(0, self.invoke("self-test")[0])
+            self.assertEqual(0, self.invoke("--self-test")[0])
+            self.assertEqual(2, check.call_count)
+        for args in (("--serve", "--self-test"), ("serve", "--send"),
+                     ("--self-test", "https://openai.com/article"),
+                     ("convert", "https://openai.com/article", "--to", "reader@kindle.com")):
+            with self.subTest(args=args), self.assertRaises(SystemExit) as raised:
+                self.invoke(*args)
+            self.assertEqual(2, raised.exception.code)
+
+    def test_send_existing_epub_never_fetches(self):
+        from backend.epub import write_epub
+        with tempfile.TemporaryDirectory() as directory, patch("cli.main.fetch_html") as fetch, \
+                patch("cli.main.send_to_kindle") as send:
+            output = Path(directory) / "existing.epub"
+            write_epub(self.article(), output)
+            original = output.read_bytes()
+            code, stdout, _ = self.invoke("send", str(output), "--to", "other@kindle.com")
+            self.assertEqual(original, output.read_bytes())
+        self.assertEqual(0, code)
+        fetch.assert_not_called()
+        self.assertEqual("Title", send.call_args.args[0].title)
+        self.assertEqual("other@kindle.com", send.call_args.args[2])
+        self.assertIn("SMTP accepted", stdout)
+
+    def test_invalid_epub_is_not_submitted(self):
+        with tempfile.TemporaryDirectory() as directory, patch("cli.main.send_to_kindle") as send:
+            output = Path(directory) / "invalid.epub"
+            output.write_bytes(b"not an EPUB")
+            code, _, stderr = self.invoke("send", str(output))
+        self.assertEqual(1, code)
+        self.assertIn("EPUB", stderr)
+        send.assert_not_called()
+
     def test_existing_output_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as directory, \
                 patch("cli.main.fetch_html", return_value=("html", "https://openai.com/article")), \

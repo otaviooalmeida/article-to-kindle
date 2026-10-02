@@ -1,4 +1,4 @@
-"""Command-line entry point for article-to-kindle."""
+"""Create Kindle Reading Copies and manage the local companion."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from backend.config import ALLOWED_ORIGIN, API_TOKEN, KINDLE_EMAIL
+from backend.config import ALLOWED_ORIGIN, API_TOKEN
 from backend.delivery import send_to_kindle, submission_settings
-from backend.epub import write_epub
+from backend.epub import read_epub_metadata, write_epub
 from backend.errors import ArticleError
 from backend.extractor import extract_article, fetch_html, slugify
 
@@ -21,7 +21,7 @@ def available_output(article, requested: Path | None) -> Path:
     if requested:
         if requested.exists():
             raise ArticleError(f"Output already exists: {requested}")
-        if not requested.parent.exists():
+        if not requested.parent.is_dir():
             raise ArticleError(f"Output directory does not exist: {requested.parent}")
         return requested
     stem = f"{slugify(article.title)}-{hashlib.sha256(article.source_url.encode()).hexdigest()[:8]}"
@@ -50,30 +50,72 @@ def self_test() -> None:
     print("self-test passed")
 
 
-def run(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("url", nargs="?", help="Public Medium or Towards Data Science article URL")
-    parser.add_argument("--output", type=Path, help="Where to write the EPUB")
-    delivery = parser.add_mutually_exclusive_group()
-    delivery.add_argument("--send", action="store_true", help="Email the EPUB to KINDLE_EMAIL")
-    delivery.add_argument("--dry-run", action="store_true", help="Create the EPUB without sending email")
-    parser.add_argument("--to", help="Override KINDLE_EMAIL for --send")
-    parser.add_argument("--self-test", action="store_true", help="Run the built-in EPUB check")
-    parser.add_argument("--serve", action="store_true", help="Run the local API on 127.0.0.1:8765")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__, epilog="Legacy URL, --serve, and --self-test invocations remain supported.")
     parser.add_argument("--debug", action="store_true", help="Show tracebacks for failures")
-    args = parser.parse_args(argv)
-    if args.self_test:
+    commands = parser.add_subparsers(dest="command", required=True)
+    convert = commands.add_parser("convert", help="Create an EPUB from a public supported article URL")
+    convert.add_argument("url", help="Public article URL on a supported host (see README)")
+    convert.add_argument("-o", "--output", type=Path, help="Where to write the EPUB (never overwrites)")
+    delivery = convert.add_mutually_exclusive_group()
+    delivery.add_argument("--send", action="store_true", help="Submit the EPUB through SMTP")
+    delivery.add_argument("--dry-run", action="store_true", help="Create an EPUB without email; identical to the default")
+    convert.add_argument("--to", help="Override KINDLE_EMAIL (requires --send)")
+    send = commands.add_parser("send", help="Submit an existing EPUB without fetching its article again")
+    send.add_argument("epub", type=Path, help="Existing EPUB file")
+    send.add_argument("--to", help="Override KINDLE_EMAIL")
+    commands.add_parser("serve", help="Run the authenticated local API on 127.0.0.1:8765")
+    commands.add_parser("self-test", help="Run the built-in EPUB check")
+    for command in commands.choices.values():
+        command.add_argument("--debug", action="store_true", default=argparse.SUPPRESS, help="Show tracebacks for failures")
+    return parser
+
+
+def normalize_argv(argv: list[str], parser: argparse.ArgumentParser) -> list[str]:
+    legacy = [flag for flag in ("--serve", "--self-test") if flag in argv]
+    if len(legacy) > 1:
+        parser.error("--serve and --self-test cannot be combined")
+    if legacy:
+        command = legacy[0][2:]
+        return [command, *[value for value in argv if value != legacy[0]]]
+    first = next((value for value in argv if value != "--debug"), None)
+    if first is None or first in {"-h", "--help", "convert", "send", "serve", "self-test"}:
+        return argv
+    return ["convert", *argv]
+
+
+def submit(article, output: Path, recipient: str) -> None:
+    print("Submitting to Kindle…", file=sys.stderr)
+    try:
+        send_to_kindle(article, output, recipient)
+    except (ArticleError, OSError, ValueError) as error:
+        import shlex
+        retry = shlex.join(["article-to-kindle", "send", str(output), "--to", recipient])
+        raise ArticleError(
+            f"Kindle submission failed. EPUB retained at {output}. {error}\n"
+            f"Do not retry blindly: SMTP acceptance may be uncertain. Once safe, retry with:\n{retry}"
+        ) from error
+    print(f"SMTP accepted for {recipient}; Amazon delivery pending.")
+
+
+def run(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(normalize_argv(list(sys.argv[1:] if argv is None else argv), parser))
+    if args.command == "self-test":
         self_test()
         return 0
-    if args.serve:
+    if args.command == "serve":
         missing = [name for name in (API_TOKEN, ALLOWED_ORIGIN) if not os.environ.get(name)]
         if missing:
-            raise ArticleError(f"Missing environment variables for --serve: {', '.join(missing)}")
+            raise ArticleError(f"Missing environment variables for serve: {', '.join(missing)}")
         import uvicorn
         uvicorn.run("backend.api:app", host="127.0.0.1", port=8765, log_level="warning")
         return 0
-    if not args.url:
-        parser.error("a URL is required unless --self-test or --serve is used")
+    if args.command == "send":
+        recipient = submission_settings(args.to)[2]
+        article = read_epub_metadata(args.epub)
+        submit(article, args.epub, recipient)
+        return 0
     if args.to is not None and not args.send:
         parser.error("--to requires --send")
     recipient = submission_settings(args.to)[2] if args.send else None
@@ -88,17 +130,9 @@ def run(argv: list[str] | None = None) -> int:
     for warning in article.warnings:
         print(f"warning: {warning}", file=sys.stderr)
     if args.send:
-        print("Submitting to Kindle…", file=sys.stderr)
-        try:
-            send_to_kindle(article, output, recipient)
-        except (ArticleError, OSError, ValueError) as error:
-            raise ArticleError(
-                f"Kindle submission failed. EPUB retained at {output}. {error}\n"
-                f"Do not retry blindly: SMTP acceptance may be uncertain."
-            ) from error
-        print(f"SMTP accepted for {recipient}; Amazon delivery pending.")
+        submit(article, output, recipient)
     elif args.dry_run:
-        print("Dry run: email not sent.")
+        print("Dry run: EPUB created; email not sent (same as the default).")
     return 0
 
 

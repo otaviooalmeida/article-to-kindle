@@ -55,8 +55,14 @@ The server listens only on `127.0.0.1:8765`. SMTP acceptance is a Kindle Submiss
 ## CLI
 
 ```bash
-./article_to_kindle.py 'https://medium.com/@user/article-slug'
+./article_to_kindle.py convert 'https://medium.com/@user/article-slug'
+./article_to_kindle.py convert 'https://openai.com/article' -o article.epub --send --to reader@kindle.com
+./article_to_kindle.py send article.epub --to reader@kindle.com
+./article_to_kindle.py serve
+./article_to_kindle.py self-test
 ```
+
+The original `./article_to_kindle.py URL`, `--serve`, and `--self-test` syntax remains supported. Incompatible modes are rejected rather than ignored. `--dry-run` creates an EPUB without sending; it is an explicit alias for the default conversion behavior, not a no-write simulation. `send` reads metadata from an existing EPUB and never fetches the Article Page again.
 
 Without `--output`, the EPUB is saved under `outputs/`. Use `--output article.epub` for another path, or `--send` to submit it through SMTP. `--to reader@kindle.com` overrides `KINDLE_EMAIL` when sending. Submission configuration is checked before fetching, and EPUB attachments must not exceed 50 MiB.
 

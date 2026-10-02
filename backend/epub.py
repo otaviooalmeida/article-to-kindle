@@ -9,7 +9,10 @@ from datetime import UTC, datetime
 from html import escape
 import re
 from pathlib import Path
+from xml.etree import ElementTree
 
+from .config import MAX_EPUB_BYTES
+from .errors import ArticleError
 from .models import Article
 
 CSS = """
@@ -26,6 +29,46 @@ math { font-size: 1.05em; } math[display="block"] { display: block; margin: 1em 
 """.strip()
 
 EMOJI_RE = re.compile("[\\U0001F1E6-\\U0001F1FF\\U0001F300-\\U0001FAFF\\u2300-\\u23FF\\u2600-\\u27BF\\u2B00-\\u2BFF\\uFE0F\\u200D]")
+
+
+def read_epub_metadata(path: Path) -> Article:
+    """Read bounded EPUB metadata for resubmission; never extract archive members."""
+    if path.stat().st_size > MAX_EPUB_BYTES:
+        raise ArticleError("EPUB exceeds the 50 MiB Kindle submission limit.")
+
+    def read_member(book, name):
+        if book.getinfo(name).file_size > 1024 * 1024:
+            raise ArticleError("EPUB metadata exceeds the 1 MiB limit.")
+        return book.read(name)
+
+    def xml(data):
+        # EPUB metadata never needs DTDs or entities. Reject UTF-16/32 and NULs
+        # as well so the declaration check cannot be bypassed by another encoding.
+        if b"\x00" in data or b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
+            raise ArticleError("EPUB metadata must not contain DTDs or entities.")
+        return ElementTree.fromstring(data)
+
+    try:
+        with zipfile.ZipFile(path) as book:
+            if read_member(book, "mimetype") != b"application/epub+zip":
+                raise ArticleError("File is not an EPUB.")
+            container = xml(read_member(book, "META-INF/container.xml"))
+            rootfile = container.find("{*}rootfiles/{*}rootfile")
+            if rootfile is None or not rootfile.get("full-path"):
+                raise ArticleError("EPUB has no package metadata.")
+            package = xml(read_member(book, rootfile.get("full-path")))
+        metadata = package.find("{*}metadata")
+        if metadata is None:
+            raise ArticleError("EPUB has no article metadata.")
+        namespace = "{http://purl.org/dc/elements/1.1/}"
+        title = (metadata.findtext(f"{namespace}title") or "").strip()
+        author = (metadata.findtext(f"{namespace}creator") or "Unknown author").strip()
+        source = (metadata.findtext(f"{namespace}source") or "").strip()
+        if not title or "\n" in title or "\r" in title:
+            raise ArticleError("EPUB title is missing or invalid.")
+        return Article(title, author, source, "", [], [])
+    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError, RuntimeError, NotImplementedError) as error:
+        raise ArticleError("Invalid or unsupported EPUB package.") from error
 
 
 def without_emojis(value: str) -> str:
