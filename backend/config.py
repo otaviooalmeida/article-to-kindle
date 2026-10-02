@@ -58,10 +58,14 @@ def load_dotenv(path: Path | None = None) -> None:
             os.environ.setdefault(name, value)
 
 
+def valid_api_token(value: str) -> bool:
+    return bool(re.fullmatch(r"[!-~]{32,}", value))
+
+
 def companion_settings() -> tuple[str, str]:
     token, origin = os.environ.get(API_TOKEN, ""), os.environ.get(ALLOWED_ORIGIN, "")
-    if len(token) < 32 or any(character.isspace() for character in token):
-        raise ArticleError(f"{API_TOKEN} must contain at least 32 non-whitespace characters. Run setup to generate one.")
+    if not valid_api_token(token):
+        raise ArticleError(f"{API_TOKEN} must contain at least 32 printable ASCII characters with no whitespace. Run setup to generate one.")
     if not re.fullmatch(r"chrome-extension://[a-p]{32}", origin):
         raise ArticleError(f"{ALLOWED_ORIGIN} must be chrome-extension:// followed by the 32-character extension ID (no trailing slash).")
     return token, origin

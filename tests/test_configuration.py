@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from backend.config import ALLOWED_ORIGIN, API_TOKEN, CONFIG_FILE, load_dotenv, read_dotenv
+from backend.config import ALLOWED_ORIGIN, API_TOKEN, CONFIG_FILE, companion_settings, load_dotenv, read_dotenv
 from backend.errors import ArticleError
 from cli.diagnostics import check_health, diagnose
 from cli.main import main
@@ -113,6 +113,21 @@ class ConfigurationTest(unittest.TestCase):
                 check_health(TOKEN, ORIGIN)
             request = opener.return_value.open.call_args.args[0]
             self.assertEqual("Bearer " + TOKEN, request.get_header("Authorization"))
+
+    def test_invalid_tokens_are_rejected_without_echoing_them(self):
+        os.environ[ALLOWED_ORIGIN] = ORIGIN
+        for token in ("short", "🙂" * 32, "x" * 32 + "\x00", "x" * 32 + "\n"):
+            with self.subTest(token=repr(token)):
+                with patch("backend.config.os.environ", {API_TOKEN: token, ALLOWED_ORIGIN: ORIGIN}):
+                    with self.assertRaises(ArticleError) as raised:
+                        companion_settings()
+                self.assertNotIn(token, str(raised.exception))
+
+    def test_missing_environment_selected_config_is_not_ignored(self):
+        os.environ[CONFIG_FILE] = "/absent/config.env"
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(1, main(["doctor"]))
+        self.assertIn("Configuration file does not exist", stderr.getvalue())
 
     def test_global_and_command_config_options(self):
         with tempfile.TemporaryDirectory() as directory:

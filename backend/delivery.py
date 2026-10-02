@@ -28,9 +28,12 @@ def submission_settings(recipient: str | None = None) -> tuple[dict[str, str], i
     """Validate submission configuration without opening a network connection."""
     try:
         settings = smtp_settings()
+    except ValueError as error:
+        raise ArticleError(str(error)) from error
+    try:
         port = int(settings[SMTP_PORT])
     except (ValueError, TypeError) as error:
-        raise ArticleError(str(error)) from error
+        raise ArticleError("SMTP_PORT must be an integer between 1 and 65535.") from error
     if not 1 <= port <= 65535:
         raise ArticleError("SMTP_PORT must be between 1 and 65535.")
     host = settings[SMTP_HOST]

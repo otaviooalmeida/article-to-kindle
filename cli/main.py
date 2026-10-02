@@ -56,15 +56,19 @@ def available_output(article, requested: Path | None, output_dir: Path | None = 
 def self_test() -> None:
     sample = r'''<html><head><meta property="og:title" content="Hello Kindle"/><meta name="author" content="Ada"/></head><body><article><h1>Hello Kindle</h1><p>This is enough sample text to make the article extractor accept it as a readable article body for the EPUB self-test.</p><p>Formula: \(x^2 + \frac{1}{2}\).</p><p>Fallback: \(\begin{matrix}\).</p><span class="katex"><annotation encoding="application/x-tex">y=\sqrt{x}</annotation></span><figure><img src="data:image/png;base64,invalid"/></figure><h2>Second section</h2><pre><code>print('hello')</code></pre><nav>Ignore this</nav></article></body></html>'''
     article = extract_article(sample, "https://medium.com/example/hello")
-    assert "<math" in article.content_html and "<mfrac>" in article.content_html
-    assert r"\frac" not in article.content_html and r"\begin{matrix}" in article.content_html
-    assert article.warnings == ["1 formula(s) retained as text", "1 image(s) omitted"]
+    checks = (
+        "<math" in article.content_html and "<mfrac>" in article.content_html,
+        r"\frac" not in article.content_html and r"\begin{matrix}" in article.content_html,
+        article.warnings == ["1 formula(s) retained as text", "1 image(s) omitted"],
+    )
+    if not all(checks):
+        raise ArticleError("EPUB self-test failed: extraction, formula conversion, or content warnings are incorrect.")
     with tempfile.TemporaryDirectory() as directory:
         epub = Path(directory) / "hello.epub"
         write_epub(article, epub)
         with zipfile.ZipFile(epub) as book:
-            assert book.read("mimetype") == b"application/epub+zip"
-            assert "OEBPS/article.xhtml" in book.namelist()
+            if book.read("mimetype") != b"application/epub+zip" or "OEBPS/article.xhtml" not in book.namelist():
+                raise ArticleError("EPUB self-test failed: generated package is invalid.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -168,7 +172,7 @@ def run(argv: list[str], reporter: Reporter) -> int:
         from cli.setup import setup
         setup(path, force=args.force)
         return 0
-    if args.config is not None and not path.is_file():
+    if (args.config is not None or os.environ.get(CONFIG_FILE)) and not path.is_file():
         raise ArticleError(f"Configuration file does not exist: {path}")
     if args.config is not None:
         os.environ[CONFIG_FILE] = str(path.resolve())
@@ -192,7 +196,7 @@ def run(argv: list[str], reporter: Reporter) -> int:
         return 0
     if args.command == "serve":
         companion_settings()
-        print("Local companion listening on http://127.0.0.1:8765 (Ctrl+C to stop).", file=sys.stderr)
+        print("Starting local companion at http://127.0.0.1:8765 (Ctrl+C to stop).", file=sys.stderr)
         import uvicorn
         uvicorn.run("backend.api:app", host="127.0.0.1", port=8765, log_level="warning")
         return 0

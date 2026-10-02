@@ -7,7 +7,7 @@ import secrets
 import tempfile
 from pathlib import Path
 
-from backend.config import ALLOWED_ORIGIN, API_TOKEN, KINDLE_EMAIL, SMTP_FROM, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT, SMTP_USERNAME, read_dotenv
+from backend.config import ALLOWED_ORIGIN, API_TOKEN, KINDLE_EMAIL, SMTP_FROM, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT, SMTP_USERNAME, read_dotenv, valid_api_token
 from backend.delivery import is_valid_email_address
 from backend.errors import ArticleError
 
@@ -66,7 +66,7 @@ def setup(path: Path, *, force=False) -> None:
         raise ArticleError("Enter the exact chrome-extension:// origin with its 32-character ID and no trailing slash.")
     values[ALLOWED_ORIGIN] = origin
     token = existing.get(API_TOKEN, "")
-    values[API_TOKEN] = token if len(token) >= 32 and not any(char.isspace() for char in token) else secrets.token_urlsafe(32)
+    values[API_TOKEN] = token if valid_api_token(token) else secrets.token_urlsafe(32)
     if input("Configure SMTP for Kindle Submission now? [y/N]: ").strip().lower() in {"y", "yes"}:
         values[SMTP_HOST] = prompt("SMTP hostname", SMTP_HOST)
         values[SMTP_PORT] = prompt("SMTP port", SMTP_PORT, "587")
@@ -89,4 +89,5 @@ def setup(path: Path, *, force=False) -> None:
     print("Local server URL: http://127.0.0.1:8765. Shell variables override this file.")
     if SMTP_FROM in values:
         print(f"Approve {values[SMTP_FROM]} in Amazon Personal Document Settings: https://www.amazon.com/hz/mycd/myx#/home/settings")
-    print(f"Start the companion with article-to-kindle serve --config {path}")
+    import shlex
+    print(f"Start the companion with {shlex.join(['article-to-kindle', 'serve', '--config', str(path)])}")

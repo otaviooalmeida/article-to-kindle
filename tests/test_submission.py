@@ -1,4 +1,3 @@
-import io
 import os
 import smtplib
 import tempfile
@@ -29,6 +28,31 @@ class SubmissionTest(unittest.TestCase):
             with self.subTest(name=name, value=value), patch.dict(os.environ, {name: value}):
                 with self.assertRaises(ArticleError):
                     submission_settings()
+
+    def test_invalid_port_value_is_not_disclosed(self):
+        with patch.dict(os.environ, {"SMTP_PORT": "accidental-secret"}):
+            with self.assertRaises(ArticleError) as raised:
+                submission_settings()
+        self.assertNotIn("accidental-secret", str(raised.exception))
+        self.assertIn("SMTP_PORT", str(raised.exception))
+
+    def test_login_failure_closes_connection_and_ssl_is_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            epub = Path(directory) / "article.epub"
+            epub.write_bytes(b"epub")
+            article = Article("Title", "Ada", "", "", [], [])
+            with patch("backend.delivery.smtplib.SMTP") as smtp:
+                smtp.return_value.login.side_effect = smtplib.SMTPAuthenticationError(535, b"secret")
+                with self.assertRaises(ArticleError):
+                    send_to_kindle(article, epub)
+                smtp.return_value.close.assert_called_once()
+                smtp.return_value.send_message.assert_not_called()
+            with patch.dict(os.environ, {"SMTP_PORT": "465"}), patch("backend.delivery.smtplib.SMTP_SSL") as smtp:
+                send_to_kindle(article, epub)
+                smtp.return_value.login.assert_called_once_with("sender@example.com", "secret")
+                smtp.return_value.starttls.assert_not_called()
+                smtp.return_value.send_message.assert_called_once()
+                smtp.return_value.close.assert_called_once()
 
     def test_explicit_recipient_overrides_default(self):
         self.assertEqual("other@kindle.com", submission_settings(" other@kindle.com ")[2])
