@@ -28,9 +28,9 @@ def fetch_html(url):
     return fetch(url)
 
 
-def extract_article(html, url):
+def extract_article(html, url, *, select_content=True):
     from backend.extractor import extract_article as extract
-    return extract(html, url)
+    return extract(html, url, select_content=select_content)
 
 
 def available_output(article, requested: Path | None, output_dir: Path | None = None) -> Path:
@@ -79,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="Write one structured result to stdout (not setup/serve)")
     commands = parser.add_subparsers(dest="command", required=True)
     convert = commands.add_parser("convert", help="Create an EPUB from a public supported article URL")
-    convert.add_argument("url", nargs="?", help="Public article URL on a supported host (see README)")
+    convert.add_argument("url", nargs="?", help="Public HTTP(S) article URL")
     saved = convert.add_mutually_exclusive_group()
     saved.add_argument("--html", metavar="FILE", help="Saved UTF-8 HTML file, or - for stdin (requires --source-url)")
     saved.add_argument("--capture", metavar="FILE", help="Article Capture JSON file, or - for stdin")
@@ -231,6 +231,7 @@ def run(argv: list[str], reporter: Reporter) -> int:
 
 def convert_one(args, reporter: Reporter, recipient: str | None = None, output_dir: Path | None = None) -> None:
     title, author = args.title, args.author
+    published_date = ""
     if args.html or args.capture:
         from cli.sources import read_capture, read_input
         reporter.progress("Loading saved article…")
@@ -239,6 +240,7 @@ def convert_one(args, reporter: Reporter, recipient: str | None = None, output_d
             page_html, final_url = capture["html"], capture["sourceUrl"]
             title = capture["title"] if title is None else title
             author = capture["author"] if author is None else author
+            published_date = capture.get("publishedDate", "")
         else:
             page_html, final_url = read_input(args.html), args.source_url
     else:
@@ -248,7 +250,9 @@ def convert_one(args, reporter: Reporter, recipient: str | None = None, output_d
     from backend.reading_copy import prepare_html
     page_html = prepare_html(page_html, final_url, title=title, author=author,
                              include_images=not args.no_images, include_links=not args.no_links)
-    article = extract_article(page_html, final_url)
+    article = extract_article(page_html, final_url, select_content=False) if args.capture else extract_article(page_html, final_url)
+    if published_date:
+        article.published_date = published_date
     output = available_output(article, args.output, output_dir)
     reporter.progress("Creating EPUB…")
     write_epub(article, output, include_source_link=not args.no_links, overwrite=False)

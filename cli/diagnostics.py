@@ -40,7 +40,7 @@ def check_health(token: str, origin: str) -> None:
 def diagnose(*, companion=False, smtp=False, smtp_login=False, recipient=None) -> list[dict]:
     checks = [{"name": "python", "ok": sys.version_info >= (3, 11),
                "message": f"{sys.version.split()[0]} (requires Python 3.11+)"}]
-    for name in ("bs4", "latex2mathml", "PIL", "fastapi", "uvicorn"):
+    for name in ("bs4", "readability", "latex2mathml", "PIL", "fastapi", "uvicorn"):
         try:
             module = importlib.import_module(name)
             checks.append({"name": name, "ok": True, "message": getattr(module, "__version__", "installed")})

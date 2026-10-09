@@ -11,9 +11,11 @@ const selectAllInput = document.querySelector("#select-all");
 const editModeButton = document.querySelector("#edit-mode");
 const modeLabel = document.querySelector(".preview-label");
 const readerArticle = document.querySelector(".reader-article");
+const MIN_PREVIEW_TEXT_CHARS = 100;
 const articleMetadata = document.querySelector(".article-metadata");
 const articleTitle = document.querySelector("#article-title");
 const articleAuthor = document.querySelector("#article-author");
+const articleDate = document.querySelector("#article-date");
 const downloadButton = document.querySelector("#download");
 const sendButton = document.querySelector("#send");
 let capture;
@@ -22,6 +24,14 @@ let editing = false;
 
 function selectedBlocks() {
   return [...content.querySelectorAll(".include-block:checked")].length;
+}
+
+function selectionIsTooSmall() {
+  const blocks = [...content.querySelectorAll(".preview-block")];
+  const selectedTextLength = blocks
+    .filter(block => block.querySelector(".include-block").checked)
+    .reduce((length, block) => length + block.querySelector(".editable-content").textContent.trim().length, 0);
+  return blocks.length > 0 && selectedTextLength < MIN_PREVIEW_TEXT_CHARS;
 }
 
 function updateSelection() {
@@ -73,10 +83,12 @@ function updateArticleHeading() {
   const titleAlreadyInArticle = Boolean(title && existingHeading &&
     normalizeText(existingHeading.textContent) === normalizeText(title) &&
     existingHeading.closest(".preview-block").querySelector(".include-block").checked);
-  articleTitle.hidden = false;
+  articleTitle.hidden = titleAlreadyInArticle;
   articleAuthor.textContent = authorInput.value.trim();
   articleAuthor.hidden = !articleAuthor.textContent;
-  articleMetadata.hidden = titleAlreadyInArticle || (!title && !articleAuthor.textContent);
+  articleDate.textContent = capture?.publishedDate ? `Published: ${capture.publishedDate}` : "";
+  articleDate.hidden = !articleDate.textContent;
+  articleMetadata.hidden = titleAlreadyInArticle && !articleAuthor.textContent && !articleDate.textContent;
 }
 
 function setEditing(isEditing) {
@@ -223,11 +235,19 @@ document.querySelector("#options").addEventListener("click", () => chrome.runtim
     if (!count) throw new Error("No article content was available to preview.");
     titleInput.value = capture.title;
     authorInput.value = capture.author;
+    const smallSelection = selectionIsTooSmall();
     const originalArticleLink = document.querySelector("#original-article");
     originalArticleLink.href = capture.sourceUrl;
     originalArticleLink.hidden = false;
     updateArticleHeading();
     setEditing(false);
+    let warnings = [...(capture.warnings || [])];
+    if (smallSelection) {
+      warnings.unshift("The model selected less than 100 characters; excluded blocks remain unchecked for review.");
+    }
+    if (warnings.length) {
+      setStatus(`Review these analysis notes before exporting: ${warnings.join("; ")}.`);
+    }
   } catch (error) {
     editor.hidden = true;
     readerArticle.hidden = true;
