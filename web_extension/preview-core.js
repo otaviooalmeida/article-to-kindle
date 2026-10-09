@@ -213,7 +213,8 @@
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.className = "include-block";
-      checkbox.checked = !sources.some(source => source.getAttribute("data-article-to-kindle-excluded") === "true");
+      checkbox.checked = !sources.some(source => source.nodeType === Node.ELEMENT_NODE &&
+        source.getAttribute("data-article-to-kindle-excluded") === "true");
       block.dataset.included = String(checkbox.checked);
       checkbox.setAttribute("aria-label", `Include section ${index + 1} in the Reading Copy`);
       const labelText = document.createElement("span");
