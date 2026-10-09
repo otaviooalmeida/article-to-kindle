@@ -11,6 +11,7 @@ const selectAllInput = document.querySelector("#select-all");
 const editModeButton = document.querySelector("#edit-mode");
 const modeLabel = document.querySelector(".preview-label");
 const readerArticle = document.querySelector(".reader-article");
+const MIN_PREVIEW_TEXT_CHARS = 100;
 const articleMetadata = document.querySelector(".article-metadata");
 const articleTitle = document.querySelector("#article-title");
 const articleAuthor = document.querySelector("#article-author");
@@ -23,6 +24,16 @@ let editing = false;
 
 function selectedBlocks() {
   return [...content.querySelectorAll(".include-block:checked")].length;
+}
+
+function restoreArticleIfSelectionIsTooSmall() {
+  const blocks = [...content.querySelectorAll(".preview-block")];
+  const selectedTextLength = blocks
+    .filter(block => block.querySelector(".include-block").checked)
+    .reduce((length, block) => length + block.querySelector(".editable-content").textContent.trim().length, 0);
+  if (!blocks.length || selectedTextLength >= MIN_PREVIEW_TEXT_CHARS) return false;
+  blocks.forEach(block => block.querySelector(".include-block").checked = true);
+  return true;
 }
 
 function updateSelection() {
@@ -226,13 +237,19 @@ document.querySelector("#options").addEventListener("click", () => chrome.runtim
     if (!count) throw new Error("No article content was available to preview.");
     titleInput.value = capture.title;
     authorInput.value = capture.author;
+    const restoredExcludedContent = restoreArticleIfSelectionIsTooSmall();
     const originalArticleLink = document.querySelector("#original-article");
     originalArticleLink.href = capture.sourceUrl;
     originalArticleLink.hidden = false;
     updateArticleHeading();
     setEditing(false);
-    if (capture.warnings?.length) {
-      setStatus(`Review these analysis notes before exporting: ${capture.warnings.join("; ")}.`);
+    let warnings = [...(capture.warnings || [])];
+    if (restoredExcludedContent) {
+      warnings = warnings.filter(warning => !/model-excluded.*available unchecked/i.test(warning));
+      warnings.unshift("The model excluded nearly all article text; all blocks were restored for review.");
+    }
+    if (warnings.length) {
+      setStatus(`Review these analysis notes before exporting: ${warnings.join("; ")}.`);
     }
   } catch (error) {
     editor.hidden = true;
