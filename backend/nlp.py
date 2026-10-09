@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup, Tag
 
+from .article_analysis import select_article_root
 from .errors import ArticleError
 
 MODEL_ENV = "ARTICLE_TO_KINDLE_NLP_MODEL"
@@ -27,11 +28,12 @@ TIMEOUT_ENV = "ARTICLE_TO_KINDLE_NLP_TIMEOUT"
 DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1"
 DEFAULT_TIMEOUT = 90
 MAX_ANALYSIS_ELEMENTS = 100000
+MAX_FULL_PAGE_BLOCKS = 100
 MAX_BLOCKS = 400
 MAX_BLOCK_TEXT = 1200
 MAX_CHUNK_TEXT = 24000
-MAX_CHUNK_BLOCKS = 100
-MAX_CHUNKS = 4
+MAX_CHUNK_BLOCKS = 32
+MAX_CHUNKS = 20
 MAX_RESPONSE_BYTES = 1024 * 1024
 BLOCK_TAGS = {
     "blockquote", "figure", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -39,6 +41,10 @@ BLOCK_TAGS = {
 }
 DROP_CONTEXT_TAGS = {"script", "style", "noscript", "template", "svg", "iframe"}
 HIDDEN_STYLE = re.compile(r"(?:display\s*:\s*none|visibility\s*:\s*hidden)", re.I)
+
+
+class _BlockLimitExceeded(ArticleError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -117,12 +123,18 @@ def _context(node: Tag) -> str:
     return " < ".join(pieces)
 
 
-def _collect_blocks(soup: BeautifulSoup) -> list[SourceBlock]:
+def _collect_blocks(soup: BeautifulSoup | Tag, limit: int = MAX_BLOCKS) -> list[SourceBlock]:
     body = soup.body or soup
     source_nodes = body.find_all(True)
     if len(source_nodes) > MAX_ANALYSIS_ELEMENTS:
         raise ArticleError(f"The page contains more than {MAX_ANALYSIS_ELEMENTS} elements to analyze.")
     candidates = []
+
+    def add_candidate(node: Tag, text: str) -> None:
+        candidates.append((node, text))
+        if len(candidates) > limit:
+            raise _BlockLimitExceeded(f"The page contains more than {limit} classifiable content blocks.")
+
     for node in body.find_all(list(BLOCK_TAGS)):
         if _is_hidden(node):
             continue
@@ -140,7 +152,7 @@ def _collect_blocks(soup: BeautifulSoup) -> list[SourceBlock]:
         if not text and node.name in {"figure", "img"}:
             text = f"[{node.name} without a caption or alt description]"
         if text:
-            candidates.append((node, text))
+            add_candidate(node, text)
 
     # Include text-only containers that don't wrap another classified block.
     for node in body.find_all(["div", "section"]):
@@ -148,18 +160,40 @@ def _collect_blocks(soup: BeautifulSoup) -> list[SourceBlock]:
             continue
         text = re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip()
         if len(text) >= 20:
-            candidates.append((node, text))
+            add_candidate(node, text)
 
-    order = {id(node): index for index, node in enumerate(body.find_all(True))}
+    order = {id(node): index for index, node in enumerate(source_nodes)}
     candidates.sort(key=lambda item: order[id(item[0])])
     blocks = []
     for node, text in candidates:
-        if len(blocks) >= MAX_BLOCKS:
-            raise ArticleError(f"The page contains more than {MAX_BLOCKS} classifiable content blocks.")
         identifier = f"b{len(blocks)}"
         text = text[:MAX_BLOCK_TEXT]
         blocks.append(SourceBlock(identifier, node, text, _context(node)))
     return blocks
+
+
+def _classification_root(soup: BeautifulSoup, source_url: str) -> BeautifulSoup | Tag:
+    """Limit model input to the article container before counting or labeling blocks."""
+    article_body = soup.select("[itemprop='articleBody']")
+    if article_body:
+        return max(article_body, key=lambda node: len(node.get_text(" ", strip=True)))
+
+    articles = soup.find_all("article")
+    if articles:
+        return max(articles, key=lambda node: len(node.get_text(" ", strip=True)))
+
+    for selector in (".article-body", ".article-content", ".post-content", ".entry-content", "[role='main']", "main"):
+        candidates = soup.select(selector)
+        if candidates:
+            return max(candidates, key=lambda node: len(node.get_text(" ", strip=True)))
+
+    readable = select_article_root(soup, source_url)
+    if readable is not None:
+        label = " ".join((readable.name, str(readable.get("id", "")), " ".join(readable.get("class", [])))).lower()
+        if readable.name not in {"nav", "header", "footer", "aside"} and not any(
+                marker in label for marker in ("recommend", "related", "read-next", "comment", "navigation", "menu")):
+            return readable
+    return soup
 
 
 def _chunks(blocks: list[SourceBlock]):
@@ -175,7 +209,7 @@ def _chunks(blocks: list[SourceBlock]):
         yield chunk
 
 
-def _request_decisions(settings: ModelSettings, title: str, host: str, blocks: list[SourceBlock]) -> dict[str, str]:
+def _request_decisions(settings: ModelSettings, title: str, host: str, blocks: list[SourceBlock]) -> tuple[dict[str, str], bool]:
     identifiers = [block.identifier for block in blocks]
     block_data = [
         {"id": block.identifier, "tag": block.node.name, "context": block.context, "text": block.text}
@@ -206,6 +240,7 @@ def _request_decisions(settings: ModelSettings, title: str, host: str, blocks: l
         "temperature": 0,
         "stream": False,
         "response_format": {"type": "json_object"},
+        "max_tokens": 2048,
     }).encode("utf-8")
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if settings.api_key:
@@ -223,19 +258,47 @@ def _request_decisions(settings: ModelSettings, title: str, host: str, blocks: l
     try:
         envelope = json.loads(raw)
         content = envelope["choices"][0]["message"]["content"]
-        result = json.loads(content)
-        decisions = result["decisions"]
-        actual = {}
-        for decision in decisions:
-            identifier, label = decision["id"], decision["label"]
-            if identifier not in identifiers or label not in {"include", "exclude", "uncertain"} or identifier in actual:
+        if isinstance(content, list):
+            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        if isinstance(content, dict):
+            result = content
+        elif isinstance(content, str):
+            decoder = json.JSONDecoder()
+            start = content.find("{")
+            if start < 0:
                 raise ValueError
-            actual[identifier] = label
-        if set(actual) != set(identifiers):
+            result, _ = decoder.raw_decode(content, start)
+        else:
             raise ValueError
-        return actual
-    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as error:
-        raise ArticleError("NLP API returned invalid block decisions; no article content was changed.") from error
+        decisions = result["decisions"]
+        if not isinstance(decisions, list):
+            raise ValueError
+        expected = set(identifiers)
+        actual = {}
+        invalid = False
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                invalid = True
+                continue
+            identifier, label = decision.get("id"), decision.get("label")
+            if identifier not in expected:
+                invalid = True
+                continue
+            if identifier in actual:
+                actual[identifier] = "uncertain"
+                invalid = True
+            elif label in {"include", "exclude", "uncertain"}:
+                actual[identifier] = label
+            else:
+                actual[identifier] = "uncertain"
+                invalid = True
+        for identifier in identifiers:
+            if identifier not in actual:
+                actual[identifier] = "uncertain"
+                invalid = True
+        return actual, invalid
+    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+        return {identifier: "uncertain" for identifier in identifiers}, True
 
 
 def classify_article_blocks(soup: BeautifulSoup, source_url: str, *,
@@ -248,16 +311,23 @@ def classify_article_blocks(soup: BeautifulSoup, source_url: str, *,
     settings = model_settings()
     if settings is None:
         return None
-    blocks = _collect_blocks(soup)
+    try:
+        blocks = _collect_blocks(soup, MAX_FULL_PAGE_BLOCKS)
+    except _BlockLimitExceeded:
+        scoped_root = _classification_root(soup, source_url)
+        blocks = _collect_blocks(scoped_root, MAX_BLOCKS)
     if not blocks:
         raise ArticleError("The page has no classifiable content blocks.")
     title = (soup.title.get_text(" ", strip=True) if soup.title else "")[:300]
     host = (urlparse(source_url).hostname or "")[:255]
     labels = {}
+    invalid_responses = 0
     for index, chunk in enumerate(_chunks(blocks), start=1):
         if index > MAX_CHUNKS:
             raise ArticleError(f"The page exceeds the configured model limit of {MAX_CHUNKS} classification requests.")
-        labels.update(_request_decisions(settings, title, host, chunk))
+        decisions, invalid = _request_decisions(settings, title, host, chunk)
+        labels.update(decisions)
+        invalid_responses += invalid
 
     selected = [block for block in blocks if labels[block.identifier] in {"include", "uncertain"}]
     uncertain = sum(labels[block.identifier] == "uncertain" for block in blocks)
@@ -276,6 +346,11 @@ def classify_article_blocks(soup: BeautifulSoup, source_url: str, *,
     warnings = []
     if uncertain:
         warnings.append(f"{uncertain} content block(s) were uncertain and included for review")
+    if invalid_responses:
+        warnings.append(
+            f"The NLP API returned incomplete or invalid decisions in {invalid_responses} request(s); "
+            "affected blocks were included as uncertain."
+        )
     if excluded:
         disposition = "available unchecked for review" if include_excluded else "classified as non-article and omitted"
         warnings.append(f"{excluded} model-excluded content block(s) {disposition}")
