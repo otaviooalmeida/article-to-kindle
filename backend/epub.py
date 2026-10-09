@@ -20,7 +20,7 @@ CSS = """
 body { font-family: serif; line-height: 1.5; margin: 5%; }
 h1, h2, h3, h4 { line-height: 1.2; margin-top: 1.5em; }
 h1.title { font-size: 1.6em; }
-.byline, .source { color: #555; font-size: 0.9em; }
+.byline, .published-date, .source { color: #555; font-size: 0.9em; }
 pre { background: #f4f4f4; padding: 0.8em; white-space: pre-wrap; font-family: monospace; }
 code { font-family: monospace; }
 img { display: block; max-width: 100%; height: auto; margin: 1em auto; }
@@ -65,9 +65,10 @@ def read_epub_metadata(path: Path) -> Article:
         title = (metadata.findtext(f"{namespace}title") or "").strip()
         author = (metadata.findtext(f"{namespace}creator") or "Unknown author").strip()
         source = (metadata.findtext(f"{namespace}source") or "").strip()
+        published_date = (metadata.findtext(f"{namespace}date") or "").strip()
         if not title or "\n" in title or "\r" in title:
             raise ArticleError("EPUB title is missing or invalid.")
-        return Article(title, author, source, "", [], [])
+        return Article(title, author, source, "", [], [], [], published_date)
     except (zipfile.BadZipFile, KeyError, ElementTree.ParseError, RuntimeError, NotImplementedError) as error:
         raise ArticleError("Invalid or unsupported EPUB package.") from error
 
@@ -81,12 +82,14 @@ def epub_xhtml(article: Article, *, include_source_link: bool = True) -> str:
     author = without_emojis(article.author)
     source_url = without_emojis(article.source_url)
     content_html = without_emojis(article.content_html)
+    published_date = without_emojis(article.published_date)
+    date_markup = f'<p class="published-date">Published: {escape(published_date)}</p>' if published_date else ""
     source = (f'<a href="{escape(source_url, quote=True)}">{escape(source_url)}</a>'
               if include_source_link else escape(source_url))
     return f'''<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>{escape(title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
-<body><article><h1 class="title">{escape(title)}</h1><p class="byline">{escape(author)}</p>{content_html}<p class="source">Source: {source}</p></article></body></html>'''
+<body><article><h1 class="title">{escape(title)}</h1><p class="byline">{escape(author)}</p>{date_markup}{content_html}<p class="source">Source: {source}</p></article></body></html>'''
 
 
 def nav_xhtml(article: Article) -> str:
@@ -102,13 +105,15 @@ def write_epub(article: Article, destination: Path, *, include_source_link: bool
     title = without_emojis(article.title)
     author = without_emojis(article.author)
     source_url = without_emojis(article.source_url)
+    published_date = without_emojis(article.published_date)
+    date_metadata = f"<dc:date>{escape(published_date)}</dc:date>" if published_date else ""
     image_manifest = "".join(
         f'<item id="image-{index}" href="{escape(asset.href, quote=True)}" media-type="{escape(asset.media_type, quote=True)}"/>'
         for index, asset in enumerate(article.images, start=1)
     )
     manifest = '<item id="article" href="article.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="css" href="style.css" media-type="text/css"/>' + image_manifest
     opf = f'''<?xml version="1.0" encoding="utf-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="book-id" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="book-id">urn:uuid:{identifier}</dc:identifier><dc:title>{escape(title)}</dc:title><dc:creator>{escape(author)}</dc:creator><dc:language>en</dc:language><dc:source>{escape(source_url)}</dc:source><meta property="dcterms:modified">{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}</meta></metadata><manifest>{manifest}</manifest><spine><itemref idref="article"/></spine></package>'''
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="book-id" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="book-id">urn:uuid:{identifier}</dc:identifier><dc:title>{escape(title)}</dc:title><dc:creator>{escape(author)}</dc:creator><dc:language>en</dc:language><dc:source>{escape(source_url)}</dc:source>{date_metadata}<meta property="dcterms:modified">{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}</meta></metadata><manifest>{manifest}</manifest><spine><itemref idref="article"/></spine></package>'''
     container = '''<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'''
     temporary = None
     try:

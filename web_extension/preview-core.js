@@ -207,14 +207,14 @@
     sourceBlocks.forEach((sources, index) => {
       const block = document.createElement("section");
       block.className = "preview-block";
-      block.dataset.included = "true";
 
       const label = document.createElement("label");
       label.className = "block-toggle";
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.className = "include-block";
-      checkbox.checked = true;
+      checkbox.checked = !sources.some(source => source.getAttribute("data-article-to-kindle-excluded") === "true");
+      block.dataset.included = String(checkbox.checked);
       checkbox.setAttribute("aria-label", `Include section ${index + 1} in the Reading Copy`);
       const labelText = document.createElement("span");
       labelText.className = "visually-hidden";
@@ -290,6 +290,7 @@
       title: title.trim(),
       author: author.trim() || "Unknown author",
       sourceUrl: capture.sourceUrl,
+      publishedDate: capture.publishedDate || null,
       html: `<article>${html}</article>`,
     };
   }

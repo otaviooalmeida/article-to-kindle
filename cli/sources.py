@@ -1,7 +1,9 @@
 """Bounded saved HTML and browser Article Capture inputs."""
 
 import json
+import re
 import sys
+from datetime import date
 from pathlib import Path
 
 from backend.config import MAX_CAPTURE_BYTES
@@ -35,5 +37,16 @@ def read_capture(path: str) -> dict[str, str]:
         raise ArticleError("Article Capture requires non-empty string title, author, sourceUrl, and html fields.")
     if len(capture["html"].encode("utf-8")) > MAX_CAPTURE_BYTES:
         raise ArticleError("Article Capture HTML exceeds 10 MiB.")
+    published_date = capture.get("publishedDate")
+    if published_date is not None:
+        if not isinstance(published_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", published_date):
+            raise ArticleError("Article Capture publishedDate must use YYYY-MM-DD format.")
+        try:
+            date.fromisoformat(published_date)
+        except ValueError as error:
+            raise ArticleError("Article Capture publishedDate is not a valid calendar date.") from error
     # Ignore all other fields, especially recipient/settings from untrusted input.
-    return {name: capture[name] for name in fields}
+    result = {name: capture[name] for name in fields}
+    if published_date:
+        result["publishedDate"] = published_date
+    return result

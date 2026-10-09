@@ -14,6 +14,7 @@ const readerArticle = document.querySelector(".reader-article");
 const articleMetadata = document.querySelector(".article-metadata");
 const articleTitle = document.querySelector("#article-title");
 const articleAuthor = document.querySelector("#article-author");
+const articleDate = document.querySelector("#article-date");
 const downloadButton = document.querySelector("#download");
 const sendButton = document.querySelector("#send");
 let capture;
@@ -73,10 +74,12 @@ function updateArticleHeading() {
   const titleAlreadyInArticle = Boolean(title && existingHeading &&
     normalizeText(existingHeading.textContent) === normalizeText(title) &&
     existingHeading.closest(".preview-block").querySelector(".include-block").checked);
-  articleTitle.hidden = false;
+  articleTitle.hidden = titleAlreadyInArticle;
   articleAuthor.textContent = authorInput.value.trim();
   articleAuthor.hidden = !articleAuthor.textContent;
-  articleMetadata.hidden = titleAlreadyInArticle || (!title && !articleAuthor.textContent);
+  articleDate.textContent = capture?.publishedDate ? `Published: ${capture.publishedDate}` : "";
+  articleDate.hidden = !articleDate.textContent;
+  articleMetadata.hidden = titleAlreadyInArticle && !articleAuthor.textContent && !articleDate.textContent;
 }
 
 function setEditing(isEditing) {
@@ -228,6 +231,9 @@ document.querySelector("#options").addEventListener("click", () => chrome.runtim
     originalArticleLink.hidden = false;
     updateArticleHeading();
     setEditing(false);
+    if (capture.warnings?.length) {
+      setStatus(`Review these analysis notes before exporting: ${capture.warnings.join("; ")}.`);
+    }
   } catch (error) {
     editor.hidden = true;
     readerArticle.hidden = true;

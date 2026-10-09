@@ -27,9 +27,10 @@ class Reporter:
 
     def article(self, article, output) -> None:
         self.result.update(title=article.title, author=article.author, sourceUrl=article.source_url,
-                           images=len(article.images), warnings=list(article.warnings), output=str(output),
-                           submission="not_requested")
-        self.notice(f"Title: {article.title}\nAuthor: {article.author}\nImages: {len(article.images)}\nCreated: {output}")
+                           publishedDate=article.published_date or None, images=len(article.images),
+                           warnings=list(article.warnings), output=str(output), submission="not_requested")
+        date_line = f"\nPublished: {article.published_date}" if article.published_date else ""
+        self.notice(f"Title: {article.title}\nAuthor: {article.author}{date_line}\nImages: {len(article.images)}\nCreated: {output}")
         for warning in article.warnings:
             self.progress(f"warning: {warning}")
 

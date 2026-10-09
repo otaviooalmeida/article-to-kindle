@@ -6,7 +6,8 @@ The project is early-stage: extraction depends on publisher markup, and Kindle r
 
 ## Features
 
-- Preserve article text, headings, code, tables, formulas, and editorial images.
+- Analyze rendered pages locally with Readability by default, or optionally classify source blocks with an OpenAI-compatible NLP model while preserving original article HTML, code, tables, formulas, and images.
+- Extract structured publication dates and include them in the preview and EPUB metadata.
 - Convert URLs, saved HTML, Article Capture JSON, or URL lists.
 - Preview, edit, and select captured sections in Chrome.
 - Optionally submit EPUBs through your SMTP account.
@@ -45,7 +46,7 @@ article-to-kindle doctor
 
 Without `-o`, EPUBs are written to `outputs/`. Existing files are not overwritten. Use `--no-images` or `--no-links` to omit images or clickable links. Run `article-to-kindle <command> --help` for options.
 
-Article Capture JSON contains `title`, `author`, `sourceUrl`, and `html` fields. Saved HTML requires `--source-url` so relative links and images can be resolved. Batch input contains one URL per line.
+Article Capture JSON contains `title`, `author`, `sourceUrl`, and `html` fields. Its HTML is treated as already selected article content: conversion preserves reader selections and intentional repetitions while still sanitizing unsafe markup. Saved HTML requires `--source-url` so relative links and images can be resolved. Batch input contains one URL per line.
 
 ## Chrome extension
 
@@ -54,7 +55,7 @@ Article Capture JSON contains `title`, `author`, `sourceUrl`, and `html` fields.
 3. Run `article-to-kindle setup`; enter the origin and optionally configure SMTP.
 4. Copy `ARTICLE_TO_KINDLE_TOKEN` from the generated configuration into the extension settings.
 5. Start the local companion with `article-to-kindle serve`.
-6. Open a supported article, launch the extension, and preview or edit the capture. Download the EPUB or submit it to Kindle.
+6. Open a supported article, launch the extension, and let the companion analyze the rendered page before preview. Review or edit the capture, then download the EPUB or submit it to Kindle.
 
 The companion listens only on `127.0.0.1:8765`. Do not expose it to a network. SMTP credentials remain in the local Python configuration, not in Chrome.
 
@@ -64,11 +65,24 @@ The companion listens only on `127.0.0.1:8765`. Do not expose it to a network. S
 
 Approve `SMTP_FROM` in Amazon's [Personal Document Settings](https://www.amazon.com/sendtokindle/email) before sending. SMTP acceptance confirms submission to the mail server, not delivery to the Kindle library. EPUB email attachments are limited to 50 MiB.
 
-## Supported sites and limitations
+## Supported pages and limitations
 
-The current host allowlist includes Medium, Towards Data Science, Substack, DEV, Hashnode, KDnuggets, Analytics Vidhya, Machine Learning Mastery, The Gradient, Papers with Code, Hugging Face, DeepLearning.AI, Google Research, Microsoft, Meta AI, and OpenAI, including subdomains.
+The project accepts HTTP(S) pages from any publisher; it no longer requires a host to be listed in the source code. Outbound requests require public DNS addresses, and local/private destinations and redirects are blocked. This does not mean every page contains an extractable article: the page still needs readable article content, and extraction quality varies by publisher.
 
-URL conversion fetches public HTML and does not execute JavaScript or use your browser session. Use the extension for content already rendered in Chrome. Formula conversion uses MathML where possible; unsupported formulas remain text with a warning. Image and layout compatibility depends on the source site and Kindle software.
+CLI URL conversion fetches the page's public HTML but does not execute JavaScript or use browser sessions; use the extension for JavaScript-rendered content already visible in Chrome. The extension accepts public HTTP(S) pages and sends an inert DOM snapshot to the authenticated loopback companion before preview. With no model configured, the companion uses Readability and the selector fallback; source HTML is never rewritten. Publication dates come from structured metadata or explicit date metadata, not guesses from article prose. Neither path bypasses paywalls or transfers browser cookies.
+
+### Optional local NLP model
+
+Block classification is opt-in and disabled by default. The companion can call any OpenAI-compatible `/v1/chat/completions` endpoint. For a local CPU-friendly starting point, install [Ollama](https://ollama.com/download), download its Qwen 2.5 3B model with `ollama pull qwen2.5:3b`, and add these lines to your `.env`:
+
+```dotenv
+ARTICLE_TO_KINDLE_NLP_MODEL=qwen2.5:3b
+ARTICLE_TO_KINDLE_NLP_BASE_URL=http://127.0.0.1:11434/v1
+```
+
+Then start Ollama and `article-to-kindle serve`. The model receives bounded text blocks and DOM context and returns only source block IDs with include/exclude/uncertain labels. Article text and rich HTML are copied from the page, not generated. Uncertain blocks remain included, and model-excluded blocks appear unchecked in the preview so they can be restored before export. Without these settings, no model is called and no model needs to be downloaded. If you configure a remote API instead of a loopback model, article block text is sent to that endpoint; choose one only if that data sharing is acceptable. Browser cookies are never sent.
+
+This implementation's model protocol has mocked API tests; model weights are not downloaded here, and extraction quality still needs validation against real pages. The preview remains the final review step. Formula conversion uses MathML where possible; unsupported formulas remain text with a warning. Image and layout compatibility depends on the source site and Kindle software.
 
 ## Development and contributions
 

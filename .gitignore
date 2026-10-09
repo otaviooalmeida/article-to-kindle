@@ -9,7 +9,21 @@ CONTEXT.md
 docs/
 # C extensions
 *.so
-tests
+# Keep the extraction regression suite and its synthetic fixtures versionable.
+tests/*
+!tests/__init__.py
+!tests/test_extractor.py
+!tests/test_api.py
+!tests/test_cli_content.py
+!tests/test_extension.py
+!tests/fixtures/
+tests/fixtures/*
+!tests/fixtures/medium.html
+!tests/fixtures/towardsdatascience.html
+!tests/fixtures/generic.html
+!tests/fixtures/readability.html
+!tests/fixtures/preview.html
+!tests/fixtures/math-preview.html
 # Distribution / packaging
 .Python
 build/

@@ -3,6 +3,7 @@
 import hmac
 import os
 import tempfile
+from datetime import date
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -14,7 +15,8 @@ from .config import ALLOWED_ORIGIN, API_TOKEN, KINDLE_EMAIL, MAX_CAPTURE_BYTES, 
 from .delivery import is_valid_email_address, send_to_kindle
 from .epub import write_epub
 from .errors import ArticleError
-from .extractor import extract_article, require_article_url, slugify
+from .extractor import analyze_article_html, extract_article, require_article_url, slugify
+from .reading_copy import prepare_html
 
 
 def error(status: int, code: str, message: str) -> JSONResponse:
@@ -39,7 +41,7 @@ class OriginMiddleware:
             content_length = int(headers.get("content-length", "0") or 0)
         except ValueError:
             return await error(400, "invalid_capture", "Invalid Content-Length header.")(scope, receive, send)
-        if content_length > MAX_CAPTURE_BYTES + 65536:
+        if content_length > MAX_CAPTURE_BYTES * 2 + 65536:
             response = error(413, "size_limit", "Article capture exceeds 10 MiB.")
             response.headers.update(self.headers(request_origin))
             return await response(scope, receive, send)
@@ -78,7 +80,15 @@ class ArticleCapture(BaseModel):
     author: str = Field(min_length=1)
     sourceUrl: str = Field(min_length=1)
     html: str = Field(min_length=1)
+    publishedDate: date | None = None
     kindleEmail: str | None = Field(default=None, max_length=254)
+
+
+class ArticleAnalysisRequest(BaseModel):
+    sourceUrl: str = Field(min_length=1)
+    html: str = Field(min_length=1)
+    title: str | None = Field(default=None, max_length=500)
+    author: str | None = Field(default=None, max_length=300)
 
 
 async def authenticate(authorization: str = Header(default="")) -> None:
@@ -92,15 +102,30 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/analyze", dependencies=[Depends(authenticate)])
+def analyze_capture(request: ArticleAnalysisRequest):
+    if len(request.html.encode("utf-8")) > MAX_CAPTURE_BYTES:
+        raise HTTPException(413, detail="Article capture exceeds 10 MiB.")
+    try:
+        require_article_url(request.sourceUrl)
+        return analyze_article_html(request.html, request.sourceUrl, title=request.title, author=request.author,
+                                    include_excluded=True)
+    except ArticleError as exception:
+        raise HTTPException(400, detail=str(exception)) from exception
+
+
 def captured_article(capture: ArticleCapture):
     if len(capture.html.encode()) > MAX_CAPTURE_BYTES:
         raise HTTPException(413, detail="Article capture exceeds 10 MiB.")
     try:
         require_article_url(capture.sourceUrl)
-        article = extract_article(capture.html, capture.sourceUrl)
+        page_html = prepare_html(capture.html, capture.sourceUrl,
+                                 title=capture.title, author=capture.author)
+        article = extract_article(page_html, capture.sourceUrl, select_content=False)
     except ArticleError as exception:
         raise HTTPException(400, detail=str(exception)) from exception
     article.title, article.author = capture.title.strip(), capture.author.strip()
+    article.published_date = capture.publishedDate.isoformat() if capture.publishedDate else article.published_date
     return article
 
 

@@ -19,3 +19,4 @@ class Article:
     headings: list[tuple[str, str]]
     images: list[ImageAsset]
     warnings: list[str] = field(default_factory=list)
+    published_date: str = ""
