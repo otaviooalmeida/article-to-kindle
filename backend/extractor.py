@@ -16,7 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote_to_bytes, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from bs4 import BeautifulSoup, Comment, Tag
+from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from latex2mathml.converter import convert as latex_to_mathml_markup
 from PIL import Image
 
@@ -37,7 +37,7 @@ DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.IGNORECASE)
 ALLOWED_TAGS = {
     "a", "b", "blockquote", "br", "code", "em", "figcaption", "figure", "h1",
     "h2", "h3", "h4", "hr", "i", "img", "li", "ol", "p", "pre", "strong",
-    "table", "tbody", "td", "th", "thead", "tr", "ul", "math", "mrow", "mi",
+    "table", "tbody", "td", "th", "thead", "tr", "ul", "span", "math", "mrow", "mi",
     "mn", "mo", "mfrac", "msqrt", "msup", "msub", "msubsup", "mtext", "mstyle",
     "semantics", "annotation", "annotation-xml", "maction", "maligngroup", "malignmark",
     "menclose", "merror", "mfenced", "mglyph", "mlabeledtr", "mlongdiv", "mmultiscripts",
@@ -394,6 +394,14 @@ def sanitize_article(root: Tag, base_url: str, *, preserve_review_markers: bool 
     for tag in list(root.find_all(True)):
         review_marker = tag.get("data-article-to-kindle-excluded") if preserve_review_markers else None
         if tag.name not in ALLOWED_TAGS:
+            if review_marker:
+                for child in list(tag.children):
+                    if isinstance(child, NavigableString) and not isinstance(child, Comment) and str(child).strip():
+                        wrapper = BeautifulSoup("", "html.parser").new_tag("span")
+                        wrapper["data-article-to-kindle-excluded"] = "true"
+                        child.wrap(wrapper)
+                for descendant in tag.find_all(True):
+                    descendant["data-article-to-kindle-excluded"] = "true"
             tag.unwrap()
             continue
         if tag.name == "a":

@@ -2,7 +2,7 @@
   const ALLOWED_TAGS = new Set([
     "a", "b", "blockquote", "br", "code", "em", "figcaption", "figure", "h1",
     "h2", "h3", "h4", "hr", "i", "img", "li", "ol", "p", "pre", "strong",
-    "table", "tbody", "td", "th", "thead", "tr", "ul", "math", "mrow", "mi",
+    "table", "tbody", "td", "th", "thead", "tr", "ul", "span", "math", "mrow", "mi",
     "mn", "mo", "mfrac", "msqrt", "msup", "msub", "msubsup", "mtext", "mstyle",
     "semantics", "annotation", "annotation-xml", "maction", "maligngroup", "malignmark",
     "menclose", "merror", "mfenced", "mglyph", "mlabeledtr", "mlongdiv", "mmultiscripts",
@@ -138,6 +138,9 @@
 
     const namespace = source.namespaceURI === MATHML_NAMESPACE ? MATHML_NAMESPACE : "http://www.w3.org/1999/xhtml";
     const element = document.createElementNS(namespace, tag);
+    if (source.getAttribute("data-article-to-kindle-excluded") === "true") {
+      element.setAttribute("data-article-to-kindle-excluded", "true");
+    }
     if (tag === "a") {
       const href = safeWebUrl(source.getAttribute("href"), baseUrl);
       if (href) element.setAttribute("href", href);

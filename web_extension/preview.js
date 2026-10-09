@@ -26,14 +26,12 @@ function selectedBlocks() {
   return [...content.querySelectorAll(".include-block:checked")].length;
 }
 
-function restoreArticleIfSelectionIsTooSmall() {
+function selectionIsTooSmall() {
   const blocks = [...content.querySelectorAll(".preview-block")];
   const selectedTextLength = blocks
     .filter(block => block.querySelector(".include-block").checked)
     .reduce((length, block) => length + block.querySelector(".editable-content").textContent.trim().length, 0);
-  if (!blocks.length || selectedTextLength >= MIN_PREVIEW_TEXT_CHARS) return false;
-  blocks.forEach(block => block.querySelector(".include-block").checked = true);
-  return true;
+  return blocks.length > 0 && selectedTextLength < MIN_PREVIEW_TEXT_CHARS;
 }
 
 function updateSelection() {
@@ -237,16 +235,15 @@ document.querySelector("#options").addEventListener("click", () => chrome.runtim
     if (!count) throw new Error("No article content was available to preview.");
     titleInput.value = capture.title;
     authorInput.value = capture.author;
-    const restoredExcludedContent = restoreArticleIfSelectionIsTooSmall();
+    const smallSelection = selectionIsTooSmall();
     const originalArticleLink = document.querySelector("#original-article");
     originalArticleLink.href = capture.sourceUrl;
     originalArticleLink.hidden = false;
     updateArticleHeading();
     setEditing(false);
     let warnings = [...(capture.warnings || [])];
-    if (restoredExcludedContent) {
-      warnings = warnings.filter(warning => !/model-excluded.*available unchecked/i.test(warning));
-      warnings.unshift("The model excluded nearly all article text; all blocks were restored for review.");
+    if (smallSelection) {
+      warnings.unshift("The model selected less than 100 characters; excluded blocks remain unchecked for review.");
     }
     if (warnings.length) {
       setStatus(`Review these analysis notes before exporting: ${warnings.join("; ")}.`);
