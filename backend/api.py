@@ -108,8 +108,7 @@ def analyze_capture(request: ArticleAnalysisRequest):
         raise HTTPException(413, detail="Article capture exceeds 10 MiB.")
     try:
         require_article_url(request.sourceUrl)
-        return analyze_article_html(request.html, request.sourceUrl, title=request.title, author=request.author,
-                                    include_excluded=True)
+        return analyze_article_html(request.html, request.sourceUrl, title=request.title, author=request.author)
     except ArticleError as exception:
         raise HTTPException(400, detail=str(exception)) from exception
 
