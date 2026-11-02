@@ -19,7 +19,6 @@ def select_article_root(soup: BeautifulSoup, source_url: str) -> Tag | None:
     """Return an original source container, or None for the legacy fallback.
 
     No network requests are made, and the caller's document is not modified.
-    This is structural article detection, not a trained semantic classifier.
     """
     source_nodes = list(soup.find_all(True))
     if len(source_nodes) > MAX_ANALYSIS_ELEMENTS:

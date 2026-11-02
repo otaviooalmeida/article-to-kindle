@@ -16,13 +16,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote_to_bytes, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from bs4 import BeautifulSoup, Comment, NavigableString, Tag
+from bs4 import BeautifulSoup, Comment, Tag
 from latex2mathml.converter import convert as latex_to_mathml_markup
 from PIL import Image
 
 from .article_analysis import select_article_root
 from .config import MAX_CAPTURE_BYTES
-from .nlp import classify_article_blocks
 from .errors import ArticleError
 from .models import Article, ImageAsset
 
@@ -390,18 +389,9 @@ def deduplicate_content(root: Tag, title: str, *, deduplicate_blocks: bool = Tru
             seen.add(key)
 
 
-def sanitize_article(root: Tag, base_url: str, *, preserve_review_markers: bool = False) -> None:
+def sanitize_article(root: Tag, base_url: str) -> None:
     for tag in list(root.find_all(True)):
-        review_marker = tag.get("data-article-to-kindle-excluded") if preserve_review_markers else None
         if tag.name not in ALLOWED_TAGS:
-            if review_marker:
-                for child in list(tag.children):
-                    if isinstance(child, NavigableString) and not isinstance(child, Comment) and str(child).strip():
-                        wrapper = BeautifulSoup("", "html.parser").new_tag("span")
-                        wrapper["data-article-to-kindle-excluded"] = "true"
-                        child.wrap(wrapper)
-                for descendant in tag.find_all(True):
-                    descendant["data-article-to-kindle-excluded"] = "true"
             tag.unwrap()
             continue
         if tag.name == "a":
@@ -420,8 +410,6 @@ def sanitize_article(root: Tag, base_url: str, *, preserve_review_markers: bool 
                 tag["xmlns"] = MATHML_NAMESPACE
         else:
             tag.attrs = {}
-        if review_marker:
-            tag["data-article-to-kindle-excluded"] = "true"
 
 
 def normalize_image(data: bytes, media_type: str) -> tuple[bytes, str, str]:
@@ -474,31 +462,23 @@ def download_images(root: Tag) -> tuple[list[ImageAsset], int]:
 
 
 def analyze_article_html(page_html: str, source_url: str, *, title: str | None = None,
-                         author: str | None = None, include_excluded: bool = False) -> dict:
+                         author: str | None = None) -> dict:
     """Select and sanitize an article snapshot without fetching its images."""
     if len(page_html.encode("utf-8")) > MAX_HTML_BYTES:
         raise ArticleError("Article HTML exceeds 10 MiB.")
     soup = BeautifulSoup(page_html, "html.parser")
     json_title, json_author = json_ld_metadata(soup)
     published_date = article_published_date(soup)
-    model_selection = classify_article_blocks(soup, source_url, include_excluded=include_excluded)
-    model_active = model_selection is not None
-    if model_selection:
-        root, warnings = model_selection
-    else:
-        root = select_article_root(soup, source_url) or choose_article_root(soup)
-        warnings = []
+    root = select_article_root(soup, source_url) or choose_article_root(soup)
     resolved_title = (title or "").strip() or json_title or clean_text(first_meta(soup, "og:title", "twitter:title")) or clean_text(root.find("h1").get_text(" ", strip=True) if root.find("h1") else "") or clean_text(soup.title.get_text(" ", strip=True) if soup.title else "")
     if not resolved_title:
         raise ArticleError("Could not find an article title.")
     resolved_author = (author or "").strip() or json_author or clean_text(first_meta(soup, "author", "article:author")) or "Unknown author"
-    if not (include_excluded and model_active):
-        trim_article_end(root)
-    warnings.extend(extract_math(root))
-    review_mode = include_excluded and model_active
-    remove_noise(root, resolved_author, select_content=not review_mode)
-    sanitize_article(root, source_url, preserve_review_markers=review_mode)
-    deduplicate_content(root, resolved_title, deduplicate_blocks=not review_mode)
+    trim_article_end(root)
+    warnings = extract_math(root)
+    remove_noise(root, resolved_author)
+    sanitize_article(root, source_url)
+    deduplicate_content(root, resolved_title)
     if len(clean_text(root.get_text(" ", strip=True))) < 100:
         raise ArticleError("Could not find enough readable article content (it may be paywalled).")
     return {
