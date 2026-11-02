@@ -54,6 +54,7 @@ SKIP_TAGS = {
     "script", "select", "source", "style", "template", "textarea",
 }
 LABELS = {"body", "author", "title", "subtitle", "noise"}
+STRUCTURED_BODY_TAGS = {"figure", "img", "math", "pre", "table"}
 CONSENT_TERMS = re.compile(
     r"\b(?:cookies?|consent|privacy preferences?|tracking preferences|data preferences)\b",
     re.IGNORECASE,
@@ -498,9 +499,20 @@ def _obvious_noise(block: ArticleBlock) -> bool:
         if re.search(r"related|recommend|read[-_ ]?next", marker) and recommendation_copy.search(ancestor.get_text(" ", strip=True)):
             return True
         ancestor = ancestor.parent
-    if block.node.name == "img":
-        image_text = f"{block.context} {block.text}".casefold()
-        if re.search(r"\b(?:avatar|author\s+(?:portrait|photo|picture)|profile\s+(?:photo|picture)|publisher\s+logo|site\s+logo)\b", image_text):
+    image_nodes = (
+        ([block.node] if block.node.name == "img" else [])
+        + list(block.node.find_all("img"))
+    )
+    if image_nodes:
+        image_descriptions = " ".join(
+            clean_text(str(image.get("alt", ""))) for image in image_nodes
+        )
+        image_text = f"{block.context} {block.text} {image_descriptions}".casefold()
+        if re.search(
+            r"\b(?:avatar|author\s+(?:portrait|photo|picture)|profile\s+(?:photo|picture)|"
+            r"publisher\s+logo|site\s+logo)\b",
+            image_text,
+        ):
             return True
     return False
 
@@ -583,11 +595,17 @@ def analyze_article_with_ai(
     block_labels = {}
     for block in blocks:
         observed = predictions[block.index]
-        # Overlap disagreement is resolved in favor of completeness.
-        block_labels[block.index] = next(
-            (label for label in ("body", "subtitle", "title", "author", "noise") if label in observed),
-            "noise",
-        )
+        if block.fixed_label:
+            block_labels[block.index] = block.fixed_label
+        elif block.node.name in STRUCTURED_BODY_TAGS:
+            # Preserve semantic article material despite a model's false noise label.
+            block_labels[block.index] = "body"
+        else:
+            # Overlap disagreement is resolved in favor of completeness.
+            block_labels[block.index] = next(
+                (label for label in ("body", "subtitle", "title", "author", "noise") if label in observed),
+                "noise",
+            )
 
     title_blocks = [block for block in blocks if block_labels[block.index] == "title"]
     author_blocks = [block for block in blocks if block_labels[block.index] == "author"]

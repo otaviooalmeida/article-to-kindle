@@ -14,6 +14,7 @@ class FakeOllamaHandler(BaseHTTPRequestHandler):
     requests = []
     invalid_response = False
     slow_response = False
+    media_as_noise = False
     stream_started = threading.Event()
     release_stream = threading.Event()
     lock = threading.Lock()
@@ -48,7 +49,9 @@ class FakeOllamaHandler(BaseHTTPRequestHandler):
         for block in blocks:
             context = f"{block.get('context', '')} {block['text']}".casefold()
             label = "body"
-            if "avatar" in context or "you may also want" in context or "site navigation" in context or "related stories" in context:
+            if FakeOllamaHandler.media_as_noise and block.get("tag") in {"figure", "img", "pre"}:
+                label = "noise"
+            elif "avatar" in context or "you may also want" in context or "site navigation" in context or "related stories" in context:
                 label = "noise"
             elif "feature title" in context:
                 label = "title"
@@ -128,6 +131,7 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
         FakeOllamaHandler.requests = []
         FakeOllamaHandler.invalid_response = False
         FakeOllamaHandler.slow_response = False
+        FakeOllamaHandler.media_as_noise = False
         FakeOllamaHandler.stream_started = threading.Event()
         FakeOllamaHandler.release_stream = threading.Event()
         self.environment = patch.dict("os.environ", {
@@ -277,6 +281,46 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("completed", result["status"])
         self.assertEqual("Spyros Georgopoulos", result["result"]["author"])
+
+    async def test_editorial_figures_and_code_stay_in_place_when_model_calls_them_noise(self):
+        FakeOllamaHandler.media_as_noise = True
+        html = '''<article><h1>Feature title</h1>
+        <p>The article explains how random choices can mislead readers and preserves the key result.</p>
+        <p>It's half right, which is the most dangerous way to be right.</p>
+        <figure><img src="/first-chart.png" alt=""></figure>
+        <h2>How I made this chart</h2>
+        <p>This section describes assumptions before showing the code example.</p>
+        <pre><code>distribution = [0.02, 0.30]</code></pre>
+        <p>The conclusion summarizes why these assumptions affect the result.</p>
+        <figure><img src="/author.png" alt="Author portrait"></figure></article>'''
+
+        job_id = await self.create_job(html)
+        result = await self.wait_for_job(job_id)
+
+        self.assertEqual("completed", result["status"])
+        article = result["result"]
+        self.assertEqual("ai", article["analysisMode"], article.get("fallbackReason"))
+        markers = BeautifulSoup(article["html"], "html.parser").select(
+            "[data-article-to-kindle-excluded]"
+        )
+        figure = next(marker for marker in markers if marker.find("img", alt=""))
+        portrait = next(marker for marker in markers if marker.find("img", alt="Author portrait"))
+        code = next(marker for marker in markers if marker.find("pre"))
+        self.assertEqual("false", figure["data-article-to-kindle-excluded"])
+        self.assertEqual("true", portrait["data-article-to-kindle-excluded"])
+        self.assertEqual("false", code["data-article-to-kindle-excluded"])
+        model_tags = [
+            block["tag"] for payload in FakeOllamaHandler.requests for block in payload["blocks"]
+        ]
+        self.assertIn("figure", model_tags)
+        self.assertIn("pre", model_tags)
+        included_html = "".join(
+            str(marker) for marker in markers
+            if marker["data-article-to-kindle-excluded"] == "false"
+        )
+        fragments = ("It's half right", "first-chart.png", "How I made this chart", "distribution =")
+        positions = [included_html.index(fragment) for fragment in fragments]
+        self.assertEqual(sorted(positions), positions)
 
     async def test_oversized_articles_are_labeled_in_overlapping_complete_chunks(self):
         paragraphs = "".join(
