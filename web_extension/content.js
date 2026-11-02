@@ -66,9 +66,8 @@
     [...snapshot.querySelectorAll("img")].forEach((image, index) => {
       const source = sourceImages[index];
       if (!source) { image.remove(); return; }
-      const label = `${source.alt} ${source.className}`;
       const trackingPixel = source.naturalWidth > 0 && source.naturalWidth <= 2 && source.naturalHeight > 0 && source.naturalHeight <= 2;
-      if (DECORATIVE.test(label) || trackingPixel) {
+      if (trackingPixel) {
         (image.closest("picture") || image).remove();
         return;
       }

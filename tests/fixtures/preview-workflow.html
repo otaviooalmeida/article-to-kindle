@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>
+window.testCapture = {
+  title: "Page metadata title",
+  author: "Page metadata author",
+  sourceUrl: "https://publisher.example.org/article",
+  pageHtml: "<html><body><article>Original snapshot to analyze.</article></body></html>",
+  analysisMode: "ai",
+  analysisRequestedAt: Date.now() - 100,
+  estimatedTextLength: 500,
+};
+window.testSavedCapture = null;
+window.testOpenedTab = null;
+window.testTrace = [];
+window.chrome = {
+  runtime: {
+    getURL: path => `chrome-extension://test-extension/${path}`,
+    openOptionsPage: () => {},
+  },
+  storage: {
+    local: {
+      get: async defaults => { window.testTrace.push("settings"); return { ...defaults, token: "test-token" }; },
+      set: async () => {},
+    },
+  },
+  tabs: { create: async value => { window.testOpenedTab = value; } },
+};
+window.ArticleCaptureStore = {
+  consumeCapture: async () => window.testCapture,
+  saveCapture: async value => { window.testSavedCapture = value; return "comparison-id"; },
+};
+window.fetch = async (url, options = {}) => {
+  const path = new URL(url).pathname;
+  window.testTrace.push(`${options.method || "GET"} ${path}`);
+  if (path === "/analysis-jobs" && options.method === "POST") {
+    return new Response(JSON.stringify({ jobId: "job-1" }), { status: 202 });
+  }
+  if (path === "/analysis-jobs/job-1" && options.method === "GET") {
+    return new Response(JSON.stringify({
+      status: "completed",
+      result: {
+        title: "AI-selected article title",
+        author: "Ada Lovelace",
+        sourceUrl: "https://publisher.example.org/article",
+        analysisMode: "ai",
+        analysisTimeMs: 230,
+        warnings: [],
+        html: '<article><div data-article-to-kindle-excluded="false"><p>Opening paragraph retained.</p></div><div data-article-to-kindle-excluded="true"><p>Newsletter promotion can be restored.</p></div><div data-article-to-kindle-excluded="false"><p>Conclusion retained after the promotion.</p></div></article>',
+      },
+    }), { status: 200 });
+  }
+  return new Response("{}", { status: 200 });
+};
+</script>
+<script src="../../web_extension/preview-core.js" defer></script>
+<script src="../../web_extension/preview.js" defer></script>
+</head>
+<body class="preview-page preview-mode">
+<header><nav><span class="preview-label">Preview</span><span id="analysis-mode-label" hidden></span><button id="compare-analysis" hidden></button><a id="original-article" hidden></a><button id="options"></button></nav></header>
+<main>
+<article class="reader-article">
+<header class="article-metadata"><h2 id="article-title"></h2><p id="article-author"></p><p id="article-date"></p></header>
+<div class="preview-options">
+<button id="edit-mode"></button>
+<label><input id="include-images" type="checkbox" checked></label>
+<label><input id="permit-links" type="checkbox" checked></label>
+<span id="image-summary"></span><span id="link-summary"></span>
+</div>
+<section id="analysis-status" hidden><p id="analysis-progress"></p><p id="analysis-warning" hidden></p><button id="use-standard" hidden></button></section>
+<fieldset id="editor" hidden><input id="title"><input id="author"><input id="select-all" type="checkbox"><span id="selection-count"></span></fieldset>
+<div id="content"></div>
+<details id="excluded-content" hidden><summary>Excluded <span id="excluded-count"></span></summary><ul id="excluded-list"></ul></details>
+</article>
+<aside>
+<input id="kindle-email" type="email"><button id="send"></button><button id="download"></button><p id="status"></p>
+</aside>
+</main>
+<script>
+(async () => {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const blocks = [...document.querySelectorAll("#content .preview-block")];
+    if (blocks.length === 3 && document.querySelector("#analysis-mode-label").textContent.includes("AI analysis")) {
+      const excluded = blocks[1];
+      const unchecked = !excluded.querySelector(".include-block").checked;
+      const excerptVisible = document.querySelector("#excluded-content").hidden === false;
+      document.querySelector("#excluded-list button").click();
+      const restored = excluded.querySelector(".include-block").checked;
+      const serialized = ArticlePreview.buildCapture(
+        window.testCapture, document.querySelector("#content"), "AI-selected article title", "Ada Lovelace", false,
+      ).html;
+      document.querySelector("#compare-analysis").click();
+      await new Promise(resolve => setTimeout(resolve, 30));
+      const independentComparison = window.testSavedCapture?.analysisMode === "standard" &&
+        window.testOpenedTab?.url.includes("comparison-id");
+      const sourceOrder = serialized.indexOf("Opening paragraph") < serialized.indexOf("Newsletter promotion") &&
+        serialized.indexOf("Newsletter promotion") < serialized.indexOf("Conclusion retained");
+      document.title = unchecked && excerptVisible && restored && independentComparison && sourceOrder
+        ? "PASS"
+        : `FAIL:${JSON.stringify({ unchecked, excerptVisible, restored, independentComparison, serialized })}`;
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 15));
+  }
+  document.title = `FAIL:preview analysis did not finish; ${document.querySelector("#analysis-progress").textContent}; ${window.testTrace.join(" | ")}`;
+})();
+</script>
+</body>
+</html>

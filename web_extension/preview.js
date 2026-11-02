@@ -17,12 +17,51 @@ const articleAuthor = document.querySelector("#article-author");
 const articleDate = document.querySelector("#article-date");
 const downloadButton = document.querySelector("#download");
 const sendButton = document.querySelector("#send");
+const analysisStatus = document.querySelector("#analysis-status");
+const analysisProgress = document.querySelector("#analysis-progress");
+const analysisWarning = document.querySelector("#analysis-warning");
+const analysisModeLabel = document.querySelector("#analysis-mode-label");
+const compareButton = document.querySelector("#compare-analysis");
+const useStandardButton = document.querySelector("#use-standard");
+const excludedContent = document.querySelector("#excluded-content");
+const excludedCount = document.querySelector("#excluded-count");
+const excludedList = document.querySelector("#excluded-list");
 let capture;
+let rawCapture;
 let busy = false;
 let editing = false;
+let requestedMode = "standard";
+let activeJobId = null;
+let runGeneration = 0;
 
 function selectedBlocks() {
   return [...content.querySelectorAll(".include-block:checked")].length;
+}
+
+function updateExcludedContent() {
+  const blocks = [...content.querySelectorAll(".preview-block")];
+  const excluded = blocks.filter(block => !block.querySelector(".include-block").checked);
+  excludedList.replaceChildren();
+  excludedCount.textContent = excluded.length ? `(${excluded.length})` : "(none)";
+  excludedContent.hidden = excluded.length === 0;
+  excluded.forEach(block => {
+    const item = document.createElement("li");
+    const excerpt = document.createElement("span");
+    const text = block.querySelector(".editable-content").textContent.trim().replace(/\s+/g, " ");
+    excerpt.textContent = text.length > 180 ? `${text.slice(0, 177)}…` : text || "Image or other article element";
+    const restore = document.createElement("button");
+    restore.type = "button";
+    restore.textContent = "Restore";
+    restore.setAttribute("aria-label", `Restore excluded section ${blocks.indexOf(block) + 1}`);
+    restore.addEventListener("click", () => {
+      block.querySelector(".include-block").checked = true;
+      updateArticleHeading();
+      updateSelection();
+      setStatus("Restored the section to its original position in the Reading Copy.");
+    });
+    item.append(excerpt, restore);
+    excludedList.append(item);
+  });
 }
 
 function updateSelection() {
@@ -46,6 +85,7 @@ function updateSelection() {
   document.querySelector("#link-summary").textContent = permitLinksInput.checked
     ? `${links} link${links === 1 ? "" : "s"} permitted`
     : `${links} link${links === 1 ? "" : "s"} removed`;
+  updateExcludedContent();
 }
 
 function setStatus(message, isBusy = false) {
@@ -61,6 +101,15 @@ function setStatus(message, isBusy = false) {
   permitLinksInput.disabled = isBusy;
   editModeButton.disabled = isBusy || !capture;
   updateSelection();
+}
+
+function setAnalysisProgress(message, { busy: isBusy = true, warning = "" } = {}) {
+  analysisStatus.hidden = !message && !warning;
+  analysisProgress.textContent = message;
+  analysisWarning.textContent = warning;
+  analysisWarning.hidden = !warning;
+  useStandardButton.hidden = !isBusy || requestedMode !== "ai";
+  compareButton.disabled = isBusy;
 }
 
 function normalizeText(value) {
@@ -105,18 +154,19 @@ async function settings() {
   return chrome.storage.local.get({ serverUrl: "http://127.0.0.1:8765", token: "" });
 }
 
-async function call(path, payload) {
+async function call(path, payload, method = "POST") {
   const { serverUrl, token } = await settings();
   if (!token) throw new Error("Configure the bearer token in Settings.");
   try {
     const response = await fetch(`${serverUrl}${path}`, {
-      method: "POST",
+      method,
+      cache: method === "GET" ? "no-store" : "default",
       headers: {
         "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json",
         "X-Article-To-Kindle-Origin": extensionOrigin(),
       },
-      body: JSON.stringify(payload),
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     });
     if (!response.ok) {
       const failure = await response.json().catch(() => ({}));
@@ -137,6 +187,149 @@ function currentCapture() {
   if (!result.title) throw new Error("Enter a title for the Reading Copy.");
   if (!selectedBlocks()) throw new Error("Select at least one content block.");
   return result;
+}
+
+function renderAnalysis(result, mode, clickStartedAt) {
+  capture = { ...rawCapture, ...result, requestedMode: mode };
+  const count = ArticlePreview.renderArticle(capture, content, !includeImagesInput.checked);
+  if (!count) throw new Error("No article content was available to preview.");
+  titleInput.value = capture.title;
+  authorInput.value = capture.author;
+  updateArticleHeading();
+  setEditing(false);
+  const elapsed = Math.max(0, Date.now() - clickStartedAt);
+  const resultMode = capture.analysisMode || mode;
+  const label = resultMode === "ai" ? "AI analysis" : "Standard extraction";
+  const timing = capture.analysisTimeMs ? `${(capture.analysisTimeMs / 1000).toFixed(1)}s analysis` : "";
+  const clickTiming = `${(elapsed / 1000).toFixed(1)}s click-to-ready`;
+  analysisModeLabel.textContent = `${label}${timing ? ` · ${timing}` : ""} · ${clickTiming}`;
+  analysisModeLabel.hidden = false;
+  const comparisonMode = mode === "ai" ? "standard" : "ai";
+  compareButton.textContent = `Compare with ${comparisonMode === "ai" ? "AI" : "standard"}`;
+  compareButton.hidden = !rawCapture.pageHtml;
+  compareButton.disabled = false;
+  const warnings = [...(capture.warnings || [])];
+  if (capture.fallbackReason) {
+    setAnalysisProgress(`AI analysis failed. Standard extraction is shown instead. ${capture.fallbackReason}`, {
+      busy: false,
+      warning: "This preview is labeled as standard extraction. Compare again with AI or edit and restore sections before exporting.",
+    });
+  } else if (warnings.length) {
+    setAnalysisProgress("Review the analysis notes before exporting.", { busy: false, warning: warnings.join("; ") });
+  } else {
+    setAnalysisProgress(`${label} complete.`, { busy: false });
+  }
+  setStatus("Previewing the Reading Copy.");
+}
+
+function formatJobPayload(mode) {
+  return {
+    sourceUrl: rawCapture.sourceUrl,
+    html: rawCapture.pageHtml,
+    title: rawCapture.title,
+    author: rawCapture.author === "Unknown author" ? undefined : rawCapture.author,
+    mode,
+  };
+}
+
+function delay(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+async function runAnalysis(mode) {
+  const generation = ++runGeneration;
+  requestedMode = mode;
+  activeJobId = null;
+  const clickStartedAt = rawCapture.analysisRequestedAt || Date.now();
+  const longArticle = (rawCapture.estimatedTextLength || rawCapture.pageHtml?.length || 0) > 100000;
+  const warning = mode === "ai" && longArticle
+    ? "This article is long and may take a while to process using AI. You can use standard extraction if you're in a hurry."
+    : "";
+  setAnalysisProgress(mode === "ai" ? "Preparing AI analysis…" : "Preparing standard extraction…", { warning });
+  setStatus(mode === "ai" ? "AI analysis is running…" : "Selecting the article…", true);
+
+  if (!rawCapture.pageHtml) {
+    if (mode === "ai") {
+      renderAnalysis({
+        ...rawCapture,
+        analysisMode: "standard",
+        fallbackReason: "The original page snapshot is unavailable; AI analysis could not run.",
+        warnings: ["AI analysis unavailable; the existing standard capture is shown."],
+      }, mode, clickStartedAt);
+      return;
+    }
+    renderAnalysis({ ...rawCapture, analysisMode: "standard" }, mode, clickStartedAt);
+    return;
+  }
+
+  let longWaitTimer;
+  try {
+    const created = await (await call("/analysis-jobs", formatJobPayload(mode))).json();
+    if (generation !== runGeneration) {
+      call(`/analysis-jobs/${encodeURIComponent(created.jobId)}`, undefined, "DELETE").catch(() => {});
+      return;
+    }
+    activeJobId = created.jobId;
+    if (mode === "ai") {
+      longWaitTimer = setTimeout(() => {
+        if (generation === runGeneration) {
+          setAnalysisProgress("AI analysis is taking longer than usual. Keep waiting or switch to standard extraction.", { warning });
+        }
+      }, Math.max(0, 15000 - (Date.now() - clickStartedAt)));
+    }
+
+    while (generation === runGeneration) {
+      const job = await (await call(`/analysis-jobs/${encodeURIComponent(activeJobId)}`, undefined, "GET")).json();
+      if (generation !== runGeneration) return;
+      if (job.status === "completed" && job.result) {
+        renderAnalysis(job.result, mode, clickStartedAt);
+        return;
+      }
+      if (job.status === "failed") throw new Error(job.error || "Article analysis failed.");
+      if (job.status === "cancelled") return;
+      const progress = job.progress?.message || (mode === "ai" ? "AI analysis is running…" : "Selecting article content…");
+      setAnalysisProgress(progress, { warning });
+      await delay(450);
+    }
+  } catch (error) {
+    if (generation !== runGeneration) return;
+    setAnalysisProgress("Article analysis could not be completed.", {
+      busy: false,
+      warning: error.message || "Check the local companion and try again.",
+    });
+    setStatus(error.message || "Article analysis failed.");
+  } finally {
+    clearTimeout(longWaitTimer);
+    if (generation === runGeneration) activeJobId = null;
+  }
+}
+
+async function useStandardExtraction() {
+  const oldJobId = activeJobId;
+  runGeneration += 1;
+  activeJobId = null;
+  if (oldJobId) {
+    call(`/analysis-jobs/${encodeURIComponent(oldJobId)}`, undefined, "DELETE").catch(() => {});
+  }
+  rawCapture.analysisRequestedAt = Date.now();
+  await runAnalysis("standard");
+}
+
+async function compareAnalysis() {
+  const mode = requestedMode === "ai" ? "standard" : "ai";
+  try {
+    compareButton.disabled = true;
+    const id = await ArticleCaptureStore.saveCapture({
+      ...rawCapture,
+      analysisMode: mode,
+      analysisRequestedAt: Date.now(),
+    });
+    await chrome.tabs.create({ url: chrome.runtime.getURL(`preview.html?id=${encodeURIComponent(id)}`) });
+    compareButton.disabled = false;
+  } catch (error) {
+    compareButton.disabled = false;
+    setAnalysisProgress("Could not open the comparison preview.", { busy: false, warning: error.message });
+  }
 }
 
 function filename(title) {
@@ -180,6 +373,8 @@ content.addEventListener("change", () => {
 });
 content.addEventListener("input", updateArticleHeading);
 editModeButton.addEventListener("click", () => setEditing(!editing));
+useStandardButton.addEventListener("click", useStandardExtraction);
+compareButton.addEventListener("click", compareAnalysis);
 content.addEventListener("click", event => {
   if (event.target.closest("a")) event.preventDefault();
 });
@@ -220,21 +415,13 @@ document.querySelector("#options").addEventListener("click", () => chrome.runtim
     kindleEmailInput.value = preferences.kindleEmail || "";
     includeImagesInput.checked = preferences.includeImages !== false;
     permitLinksInput.checked = preferences.permitLinks !== false;
-    capture = storedCapture;
-    if (!capture) throw new Error("Article preview expired. Reopen the extension on the article.");
-    const count = ArticlePreview.renderArticle(capture, content, !includeImagesInput.checked);
-    if (!count) throw new Error("No article content was available to preview.");
-    titleInput.value = capture.title;
-    authorInput.value = capture.author;
+    rawCapture = storedCapture;
+    if (!rawCapture) throw new Error("Article preview expired. Reopen the extension on the article.");
+    requestedMode = rawCapture.analysisMode === "ai" ? "ai" : "standard";
     const originalArticleLink = document.querySelector("#original-article");
-    originalArticleLink.href = capture.sourceUrl;
+    originalArticleLink.href = rawCapture.sourceUrl;
     originalArticleLink.hidden = false;
-    updateArticleHeading();
-    setEditing(false);
-    const warnings = [...(capture.warnings || [])];
-    if (warnings.length) {
-      setStatus(`Review these analysis notes before exporting: ${warnings.join("; ")}.`);
-    }
+    await runAnalysis(requestedMode);
   } catch (error) {
     editor.hidden = true;
     readerArticle.hidden = true;
