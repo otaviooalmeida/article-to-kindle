@@ -220,8 +220,19 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
         preview_blocks = BeautifulSoup(article["html"], "html.parser")
         recommendation = preview_blocks.find(string=lambda text: text and "You may also want" in text)
         self.assertEqual("true", recommendation.find_parent("div", attrs={"data-article-to-kindle-excluded": True}).get("data-article-to-kindle-excluded"))
+        navigation = preview_blocks.find(string=lambda text: text and "Site navigation" in text)
+        self.assertEqual("true", navigation.find_parent("div", attrs={"data-article-to-kindle-excluded": True}).get("data-article-to-kindle-excluded"))
         self.assertIn('data-article-to-kindle-excluded="true"', article["html"])
         self.assertIn("Ada portrait", article["html"])
+        model_payload = json.dumps(FakeOllamaHandler.requests)
+        self.assertIn("Article evidence quotes", model_payload)
+        self.assertNotIn("Site navigation with links", model_payload)
+        self.assertNotIn("You may also want", model_payload)
+        self.assertTrue(all(
+            "standardDecision" in block
+            for payload in FakeOllamaHandler.requests for block in payload["blocks"]
+        ))
+        self.assertNotIn("data-article-to-kindle-standard", article["html"])
         self.assertGreater(article["analysisTimeMs"], 0)
 
     async def test_cookie_dialog_and_post_article_cards_are_excluded_but_references_survive(self):
@@ -328,6 +339,21 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
         positions = [included_html.index(fragment) for fragment in fragments]
         self.assertEqual(sorted(positions), positions)
 
+    async def test_refined_subtitle_keeps_its_original_position(self):
+        html = '''<article><h1>Feature title</h1>
+        <p>The introduction comes first and preserves the original argument for the reading copy.</p>
+        <p>The body continues with enough complete explanation to remain part of the article.</p>
+        <p class="subtitle">Feature subtitle appears later in the original source order.</p>
+        </article>'''
+
+        job_id = await self.create_job(html)
+        result = await self.wait_for_job(job_id)
+
+        self.assertEqual("completed", result["status"])
+        rendered = BeautifulSoup(result["result"]["html"], "html.parser").get_text(" ", strip=True)
+        self.assertLess(rendered.index("introduction comes first"), rendered.index("subtitle appears later"))
+        self.assertLess(rendered.index("body continues"), rendered.index("subtitle appears later"))
+
     async def test_oversized_articles_are_labeled_in_overlapping_complete_chunks(self):
         paragraphs = "".join(
             f"<p>Section {index} preserves its complete original article wording for evaluation.</p>"
@@ -381,6 +407,9 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn(phrase, excluded_text)
         self.assertIn("epilogue concludes", included_text)
         self.assertIn("reference supports", included_text)
+        payload = json.dumps(FakeOllamaHandler.requests)
+        self.assertNotIn("Data Analyst roadmap", payload)
+        self.assertNotIn("Share This Article", payload)
 
     async def test_related_card_widget_inside_article_is_excluded_after_references(self):
         html = '''<article><h1>Forecast calibration</h1>
@@ -394,6 +423,7 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
           <a href="/two"><h3>Partner story</h3><p>A promoted partner story in a second card.</p></a>
         </section>
         <div class="bottom-promo"><p>Explore this product today in a post-article promotion.</p></div>
+        Loose inline text after the story cards is also outside the article.
         </article>'''
 
         job_id = await self.create_job(html)
@@ -412,7 +442,9 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Another story", excluded_text)
         self.assertIn("post-article promotion", excluded_text)
+        self.assertIn("Loose inline text after the story cards", excluded_text)
         self.assertIn("first reference supports", included_text)
+        self.assertNotIn("Loose inline text after the story cards", json.dumps(FakeOllamaHandler.requests))
         self.assertIn("Its conclusion describes", included_text)
 
     async def test_embedded_media_is_reduced_to_static_fallbacks_with_warnings(self):
