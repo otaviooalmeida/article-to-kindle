@@ -54,7 +54,7 @@ class FakeOllamaHandler(BaseHTTPRequestHandler):
                 label = "title"
             elif "feature subtitle" in context:
                 label = "subtitle"
-            elif "by ada lovelace" in context:
+            elif "by ada lovelace" in context or "byline" in block.get("context", "").casefold():
                 label = "author"
             labels[str(block["id"])] = label
         if invalid and labels:
@@ -220,6 +220,64 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Ada portrait", article["html"])
         self.assertGreater(article["analysisTimeMs"], 0)
 
+    async def test_cookie_dialog_and_post_article_cards_are_excluded_but_references_survive(self):
+        html = '''<html><body>
+        <main><article>
+          <div class="privacy-center-floating" role="dialog" aria-modal="true" aria-label="Customize consent preferences">
+            <h1>Customize Consent Preferences</h1>
+            <p>Necessary storage controls are required for basic functionality and consent choices.</p>
+            <p>Optional analytics measure visits, sessions, and site interaction.</p>
+          </div>
+          <h1>How calibration changes the forecast</h1>
+          <p>The opening explains the measurement process and preserves the original argument for the reader.</p>
+          <p>The conclusion summarizes the findings while noting limitations that remain important.</p>
+          <p class="cookie-history">Cookie consent policies affect this research topic and belong in the article.</p>
+          <section class="article-references"><h2>References</h2>
+            <p>Reference one supports the article's claims and belongs after the conclusion.</p>
+          </section>
+        </article>
+        <section class="editors-picks"><h2>More from the publication</h2>
+          <a href="/another-story"><h3>Another story for you</h3><p>Read this separate feature about an unrelated topic.</p></a>
+          <a href="/sponsored-story"><h3>Partner spotlight</h3><p>Explore this promoted product and learn more today.</p></a>
+        </section></main></body></html>'''
+
+        job_id = await self.create_job(html)
+        result = await self.wait_for_job(job_id)
+
+        self.assertEqual("completed", result["status"])
+        article = result["result"]
+        self.assertEqual("How calibration changes the forecast", article["title"])
+        self.assertEqual("ai", article["analysisMode"], article.get("fallbackReason"))
+        blocks = BeautifulSoup(article["html"], "html.parser").select("[data-article-to-kindle-excluded]")
+        excluded = [block for block in blocks if block["data-article-to-kindle-excluded"] == "true"]
+        included = [block for block in blocks if block["data-article-to-kindle-excluded"] == "false"]
+        excluded_text = " ".join(block.get_text(" ", strip=True) for block in excluded)
+        included_text = " ".join(block.get_text(" ", strip=True) for block in included)
+        self.assertIn("Customize Consent Preferences", excluded_text)
+        self.assertIn("Partner spotlight", excluded_text)
+        self.assertIn("Reference one supports", included_text)
+        self.assertIn("conclusion summarizes", included_text)
+        self.assertIn("Cookie consent policies affect this research topic", included_text)
+        title_entry = next(
+            block for payload in FakeOllamaHandler.requests for block in payload["blocks"]
+            if "How calibration changes the forecast" in block["text"]
+        )
+        self.assertNotIn("Customize Consent Preferences", title_entry["nearby"])
+        self.assertNotIn("Another story for you", json.dumps(FakeOllamaHandler.requests))
+
+    async def test_author_byline_does_not_absorb_publication_date_or_read_time(self):
+        html = '''<article><h1>Feature title</h1>
+        <p class="byline">Spyros Georgopoulos October 30, 2026 9 min read</p>
+        <p>This complete article paragraph retains enough original wording to create a valid reading copy.</p>
+        <p>This second complete article paragraph also preserves enough text to pass article validation.</p>
+        </article>'''
+
+        job_id = await self.create_job(html)
+        result = await self.wait_for_job(job_id)
+
+        self.assertEqual("completed", result["status"])
+        self.assertEqual("Spyros Georgopoulos", result["result"]["author"])
+
     async def test_oversized_articles_are_labeled_in_overlapping_complete_chunks(self):
         paragraphs = "".join(
             f"<p>Section {index} preserves its complete original article wording for evaluation.</p>"
@@ -239,6 +297,73 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
             for payload in FakeOllamaHandler.requests
         ]
         self.assertTrue(any(windows[index] & windows[index + 1] for index in range(len(windows) - 1)))
+
+    async def test_article_aside_and_footer_are_excluded_without_losing_epilogue_or_references(self):
+        html = '''<html><body><article><h1>How calibration changes the forecast</h1>
+        <div class="article-copy">
+          <p>The article explains the calibration method and retains the important experimental context.</p>
+          <h2>Epilogue</h2><p>The epilogue concludes the author's argument without ending the references.</p>
+          <section class="references"><h2>References</h2>
+            <p>This reference supports the article's final claims and must remain after the conclusion.</p>
+          </section>
+        </div>
+        <aside class="not-prose flex items-center"><p>Learn this step by step with the interactive Data Analyst roadmap.</p><a href="/course">View the promoted course</a></aside>
+        <footer><p>Written By Ada Lovelace</p><p>Ada is a data scientist and writes about other topics on social media.</p>
+          <p>Share This Article</p><p>Submit your insights to our global publication.</p>
+        </footer>
+        </article></body></html>'''
+
+        job_id = await self.create_job(html)
+        result = await self.wait_for_job(job_id)
+
+        self.assertEqual("completed", result["status"])
+        article = result["result"]
+        blocks = BeautifulSoup(article["html"], "html.parser").select("[data-article-to-kindle-excluded]")
+        excluded_text = " ".join(
+            block.get_text(" ", strip=True) for block in blocks
+            if block["data-article-to-kindle-excluded"] == "true"
+        )
+        included_text = " ".join(
+            block.get_text(" ", strip=True) for block in blocks
+            if block["data-article-to-kindle-excluded"] == "false"
+        )
+        for phrase in ("Data Analyst roadmap", "Written By Ada Lovelace", "Share This Article", "global publication"):
+            self.assertIn(phrase, excluded_text)
+        self.assertIn("epilogue concludes", included_text)
+        self.assertIn("reference supports", included_text)
+
+    async def test_related_card_widget_inside_article_is_excluded_after_references(self):
+        html = '''<article><h1>Forecast calibration</h1>
+        <p>This article introduction describes how calibration is performed and provides enough detail to be readable.</p>
+        <p>Its conclusion describes the methods and their limitations while preserving all important information.</p>
+        <section class="references"><h2>References</h2>
+          <p>The first reference supports the article and is genuine end matter after the conclusion.</p>
+        </section>
+        <section class="editors-picks-widget"><h2>More from this publication</h2>
+          <a href="/one"><h3>Another story</h3><p>A separate article card with sufficient text to look like a recommendation.</p></a>
+          <a href="/two"><h3>Partner story</h3><p>A promoted partner story in a second card.</p></a>
+        </section>
+        <div class="bottom-promo"><p>Explore this product today in a post-article promotion.</p></div>
+        </article>'''
+
+        job_id = await self.create_job(html)
+        result = await self.wait_for_job(job_id)
+
+        self.assertEqual("completed", result["status"])
+        article = result["result"]
+        blocks = BeautifulSoup(article["html"], "html.parser").select("[data-article-to-kindle-excluded]")
+        excluded_text = " ".join(
+            block.get_text(" ", strip=True) for block in blocks
+            if block["data-article-to-kindle-excluded"] == "true"
+        )
+        included_text = " ".join(
+            block.get_text(" ", strip=True) for block in blocks
+            if block["data-article-to-kindle-excluded"] == "false"
+        )
+        self.assertIn("Another story", excluded_text)
+        self.assertIn("post-article promotion", excluded_text)
+        self.assertIn("first reference supports", included_text)
+        self.assertIn("Its conclusion describes", included_text)
 
     async def test_embedded_media_is_reduced_to_static_fallbacks_with_warnings(self):
         html = '''<article><h1>Static media article</h1>
