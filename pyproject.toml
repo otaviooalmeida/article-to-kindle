@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 license = {file = "LICENSE"}
 dependencies = [
     "beautifulsoup4==4.13.4",
+    "readability-lxml==0.9",
     "fastapi==0.115.12",
     "latex2mathml==3.81.1",
     "uvicorn==0.34.2",

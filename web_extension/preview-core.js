@@ -138,9 +138,6 @@
 
     const namespace = source.namespaceURI === MATHML_NAMESPACE ? MATHML_NAMESPACE : "http://www.w3.org/1999/xhtml";
     const element = document.createElementNS(namespace, tag);
-    if (source.getAttribute("data-article-to-kindle-excluded") === "true") {
-      element.setAttribute("data-article-to-kindle-excluded", "true");
-    }
     if (tag === "a") {
       const href = safeWebUrl(source.getAttribute("href"), baseUrl);
       if (href) element.setAttribute("href", href);
@@ -216,9 +213,8 @@
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.className = "include-block";
-      checkbox.checked = !sources.some(source => source.nodeType === Node.ELEMENT_NODE &&
-        source.getAttribute("data-article-to-kindle-excluded") === "true");
-      block.dataset.included = String(checkbox.checked);
+      checkbox.checked = true;
+      block.dataset.included = "true";
       checkbox.setAttribute("aria-label", `Include section ${index + 1} in the Reading Copy`);
       const labelText = document.createElement("span");
       labelText.className = "visually-hidden";

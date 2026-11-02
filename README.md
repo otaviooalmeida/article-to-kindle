@@ -6,7 +6,7 @@ The project is early-stage: extraction depends on publisher markup, and Kindle r
 
 ## Features
 
-- Analyze rendered pages locally with Readability by default, or optionally classify source blocks with an OpenAI-compatible NLP model while preserving original article HTML, code, tables, formulas, and images.
+- Analyze rendered pages locally with Readability while preserving original article HTML, code, tables, formulas, and images.
 - Extract structured publication dates and include them in the preview and EPUB metadata.
 - Convert URLs, saved HTML, Article Capture JSON, or URL lists.
 - Preview, edit, and select captured sections in Chrome.
@@ -69,20 +69,9 @@ Approve `SMTP_FROM` in Amazon's [Personal Document Settings](https://www.amazon.
 
 The project accepts HTTP(S) pages from any publisher; it no longer requires a host to be listed in the source code. Outbound requests require public DNS addresses, and local/private destinations and redirects are blocked. This does not mean every page contains an extractable article: the page still needs readable article content, and extraction quality varies by publisher.
 
-CLI URL conversion fetches the page's public HTML but does not execute JavaScript or use browser sessions; use the extension for JavaScript-rendered content already visible in Chrome. The extension accepts public HTTP(S) pages and sends an inert DOM snapshot to the authenticated loopback companion before preview. With no model configured, the companion uses Readability and the selector fallback; source HTML is never rewritten. Publication dates come from structured metadata or explicit date metadata, not guesses from article prose. Neither path bypasses paywalls or transfers browser cookies.
+CLI URL conversion fetches the page's public HTML but does not execute JavaScript or use browser sessions; use the extension for JavaScript-rendered content already visible in Chrome. The extension accepts public HTTP(S) pages and sends an inert DOM snapshot to the authenticated loopback companion before preview. The companion uses Readability with a selector fallback and retains source HTML for the existing sanitization and EPUB pipeline. Publication dates come from structured metadata or explicit date metadata, not guesses from article prose. Neither path bypasses paywalls or transfers browser cookies.
 
-### Optional local NLP model
-
-Block classification is opt-in and disabled by default. The companion can call any OpenAI-compatible `/v1/chat/completions` endpoint. For a local CPU-friendly starting point, install [Ollama](https://ollama.com/download), download its Qwen 2.5 3B model with `ollama pull qwen2.5:3b`, and add these lines to your `.env`:
-
-```dotenv
-ARTICLE_TO_KINDLE_NLP_MODEL=qwen2.5:3b
-ARTICLE_TO_KINDLE_NLP_BASE_URL=http://127.0.0.1:11434/v1
-```
-
-Then start Ollama and `article-to-kindle serve`. The model receives bounded text blocks and DOM context and returns only source block IDs with include/exclude/uncertain labels. Article text and rich HTML are copied from the page, not generated. Uncertain blocks remain included, and model-excluded blocks appear unchecked in the preview so they can be restored before export. Without these settings, no model is called and no model needs to be downloaded. If you configure a remote API instead of a loopback model, article block text is sent to that endpoint; choose one only if that data sharing is acceptable. Browser cookies are never sent.
-
-This implementation's model protocol has mocked API tests; model weights are not downloaded here, and extraction quality still needs validation against real pages. The preview remains the final review step. Formula conversion uses MathML where possible; unsupported formulas remain text with a warning. Image and layout compatibility depends on the source site and Kindle software.
+Formula conversion uses MathML where possible; unsupported formulas remain text with a warning. Image and layout compatibility depends on the source site and Kindle software.
 
 ## Development and contributions
 
