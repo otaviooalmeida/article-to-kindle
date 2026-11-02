@@ -504,15 +504,22 @@ def _obvious_noise(block: ArticleBlock) -> bool:
         + list(block.node.find_all("img"))
     )
     if image_nodes:
-        image_descriptions = " ".join(
-            clean_text(str(image.get("alt", ""))) for image in image_nodes
+        image_markers = [block.context]
+        image_markers.extend(
+            clean_text(str(image.get(key, "")))
+            for image in image_nodes
+            for key in ("alt", "aria-label", "title")
         )
-        image_text = f"{block.context} {block.text} {image_descriptions}".casefold()
-        if re.search(
+        image_markers.extend(
+            clean_text(caption.get_text(" ", strip=True))
+            for caption in block.node.find_all("figcaption")
+        )
+        decorative_image = re.compile(
             r"\b(?:avatar|author\s+(?:portrait|photo|picture)|profile\s+(?:photo|picture)|"
             r"publisher\s+logo|site\s+logo)\b",
-            image_text,
-        ):
+            re.IGNORECASE,
+        )
+        if any(decorative_image.search(marker) for marker in image_markers):
             return True
     return False
 

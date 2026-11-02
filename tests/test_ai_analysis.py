@@ -288,6 +288,7 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
         <p>The article explains how random choices can mislead readers and preserves the key result.</p>
         <p>It's half right, which is the most dangerous way to be right.</p>
         <figure><img src="/first-chart.png" alt=""></figure>
+        <figure><img src="/credited-chart.png" alt="Photo by the author"></figure>
         <h2>How I made this chart</h2>
         <p>This section describes assumptions before showing the code example.</p>
         <pre><code>distribution = [0.02, 0.30]</code></pre>
@@ -304,9 +305,11 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
             "[data-article-to-kindle-excluded]"
         )
         figure = next(marker for marker in markers if marker.find("img", alt=""))
+        credited_figure = next(marker for marker in markers if marker.find("img", alt="Photo by the author"))
         portrait = next(marker for marker in markers if marker.find("img", alt="Author portrait"))
         code = next(marker for marker in markers if marker.find("pre"))
         self.assertEqual("false", figure["data-article-to-kindle-excluded"])
+        self.assertEqual("false", credited_figure["data-article-to-kindle-excluded"])
         self.assertEqual("true", portrait["data-article-to-kindle-excluded"])
         self.assertEqual("false", code["data-article-to-kindle-excluded"])
         model_tags = [
@@ -318,7 +321,10 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
             str(marker) for marker in markers
             if marker["data-article-to-kindle-excluded"] == "false"
         )
-        fragments = ("It's half right", "first-chart.png", "How I made this chart", "distribution =")
+        fragments = (
+            "It's half right", "first-chart.png", "credited-chart.png",
+            "How I made this chart", "distribution =",
+        )
         positions = [included_html.index(fragment) for fragment in fragments]
         self.assertEqual(sorted(positions), positions)
 
