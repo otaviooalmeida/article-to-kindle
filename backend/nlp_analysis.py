@@ -83,6 +83,13 @@ WIDGET_MARKERS = re.compile(
     r"promo(?:tional)?[-_ ]?(?:card|widget|banner)|upsell)",
     re.IGNORECASE,
 )
+POST_ARTICLE_RECOMMENDATION_CUE = re.compile(
+    r"^(?:read more|read next|keep reading|continue reading|you may also want to read|"
+    r"you might also want to read|you may also like|you might also like|"
+    r"related (?:articles?|stories|content)|more (?:stories|articles|from)|up next|"
+    r"recommended (?:for you|stories)|what to read next)\b",
+    re.IGNORECASE,
+)
 RELATED_MARKER = re.compile(r"related", re.IGNORECASE)
 BOUNDARY_WIDGET_MARKERS = re.compile(
     r"recommend|read[-_ ]?next|editors?[-_ ]?picks|more[-_ ]?(?:from|stories|articles)|comments?|tag[-_ ]?list",
@@ -99,9 +106,11 @@ author: the writer's byline only, not a biography, portrait, email, social profi
 Use each block's tag, class/id path, and nearby preceding/following text to distinguish genuine section headings from widgets. Nearby text is context only and must not change another block's label.
 title: the main headline of the article, not the publisher or page title.
 subtitle: a visible article deck/subheadline immediately describing the headline.
-noise: site navigation, ads, image-only avatars/logos, contact/follow widgets, author biographies, comments, newsletter prompts, recommendation cards, and material that is clearly not part of the article.
+noise: site navigation, ads, image-only avatars/logos, contact/follow widgets, author biographies, comments, newsletter prompts, recommendation cards, and anything clearly outside the principal article. Keep the principal article, not everything that happens to be inside an article element.
 
-A section does not become noise only because it follows a conclusion; references and appendices can be part of the article. Do not invent text or IDs. Metadata hints are fallible and do not override clear visible evidence. Return only the required JSON."""
+Treat every clearly separate recommendation or read-more module as noise in its entirety, even when it appears after the article's apparent conclusion or is nested inside the article DOM. Exclude the entire recommendation section: its heading, introduction, every linked story card, headlines, descriptions, images, captions, calls to action, and other blocks belonging to those recommendations. Do not exclude only the cue or first card while keeping the rest of the module. When a clear post-article recommendation cue marks the transition out of the principal article, treat it as a cutoff: label that block and every following block in source order as noise, including image/media blocks and footer content even if they have no recommendation text of their own. Look for cues such as “Read more,” “Keep reading,” “You may also want to read,” “You might also like,” “More stories,” “Related articles,” “Up next,” and “Recommended for you,” as well as equivalent recommendation wording. Use headings, repeated linked cards, links, nearby text, and class/id path together; generic layout classes alone are not evidence that content is a recommendation.
+
+Do not discard genuine article content merely because it follows a conclusion: references and appendices that belong to the principal article remain body. Conversely, do not keep a recommendation module or its cards just because they follow the article or share its container. Do not invent text or IDs. Metadata hints are fallible and do not override clear visible evidence. Return only the required JSON."""
 
 
 class AiAnalysisError(ArticleError):
@@ -560,6 +569,24 @@ def _obvious_noise(block: ArticleBlock) -> bool:
     return False
 
 
+def _post_article_recommendation_boundary(
+    blocks: list[ArticleBlock], standard_block_ids: set[int], article_root: Tag | None,
+) -> int | None:
+    if article_root is None:
+        return None
+    article_text_before_cue = 0
+    for block in blocks:
+        if (
+            article_text_before_cue >= 100
+            and _is_within(block.source_anchor or block.source_node, article_root)
+            and POST_ARTICLE_RECOMMENDATION_CUE.match(clean_text(block.text))
+        ):
+            return block.index
+        if block.index in standard_block_ids:
+            article_text_before_cue += len(block.text)
+    return None
+
+
 def analyze_article_with_ai(
     page_html: str,
     source_url: str,
@@ -627,10 +654,16 @@ def analyze_article_with_ai(
     if fallback_author == "Unknown author":
         fallback_author = _clean_author_name(standard_result.get("author", "")) or fallback_author
     widget_roots = _post_article_widget_roots(article_root)
+    recommendation_boundary = _post_article_recommendation_boundary(
+        blocks, standard_block_ids, article_root,
+    )
     media_fallback_tags = {"iframe", "video", "audio", "canvas", "svg"}
     for block in blocks:
         source_anchor = block.source_anchor or block.source_node
         hard_noise = (
+            recommendation_boundary is not None
+            and block.index >= recommendation_boundary
+        ) or (
             any(_is_within(source_anchor, root) for root in consent_roots)
             or _is_in_post_widget_scope(source_anchor, widget_roots)
             or _obvious_noise(block)

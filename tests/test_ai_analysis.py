@@ -8,6 +8,7 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 
 from backend.api import app
+from backend.nlp_analysis import SYSTEM_PROMPT, analyze_article_with_ai
 
 
 class FakeOllamaHandler(BaseHTTPRequestHandler):
@@ -169,6 +170,57 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
                 return result
             time.sleep(0.01)
         self.fail("Article analysis did not finish within five seconds")
+
+    def test_ai_prompt_excludes_whole_recommendation_sections(self):
+        prompt = SYSTEM_PROMPT.casefold()
+
+        for cue in ("read more", "keep reading", "you may also want to read", "you might also like"):
+            self.assertIn(cue, prompt)
+        self.assertIn("principal article", prompt)
+        self.assertIn("entire recommendation section", prompt)
+        self.assertIn("every linked story card", prompt)
+        self.assertIn("every following block in source order", prompt)
+        self.assertIn("image/media blocks", prompt)
+
+    def test_post_article_recommendation_boundary_excludes_all_following_blocks(self):
+        html = '''<article><h1>Feature title</h1>
+        <p>The introduction has enough original prose to make this a valid article and preserve its essential explanation.</p>
+        <p>A second substantive paragraph explains more context before the article ends, so recommendations afterward are clearly separate.</p>
+        <h2>Keep reading</h2><div><img src="/story-cover.jpg" alt="A cover for another story">
+        <h3>Another story</h3><p>More detail about another story which is not part of this article.</p></div></article>'''
+
+        class LabelRecommendationTailAsNoise:
+            def __init__(self):
+                self.seen_text = []
+
+            def label_window(self, _model, payload, **_kwargs):
+                labels = {}
+                after_recommendation_heading = False
+                for block in payload["blocks"]:
+                    self.seen_text.append(block["text"])
+                    if block["text"].strip().casefold() == "keep reading":
+                        after_recommendation_heading = True
+                    label = "noise" if after_recommendation_heading else "body"
+                    if block["text"].strip() == "Feature title":
+                        label = "title"
+                    labels[str(block["id"])] = label
+                return json.dumps({"labels": labels})
+
+        client = LabelRecommendationTailAsNoise()
+        result = analyze_article_with_ai(
+            html, "https://publisher.example/article", client,
+        )
+        markers = BeautifulSoup(result["html"], "html.parser").select(
+            "[data-article-to-kindle-excluded]"
+        )
+        image = next(marker for marker in markers if marker.find("img", src="/story-cover.jpg"))
+        card_title = next(marker for marker in markers if "Another story" in marker.get_text())
+        heading = next(marker for marker in markers if "Keep reading" in marker.get_text())
+        self.assertIn("essential explanation", result["html"])
+        self.assertEqual("true", heading["data-article-to-kindle-excluded"])
+        self.assertEqual("true", image["data-article-to-kindle-excluded"])
+        self.assertEqual("true", card_title["data-article-to-kindle-excluded"])
+        self.assertNotIn("A cover for another story", " ".join(client.seen_text))
 
     async def test_analysis_jobs_require_the_configured_bearer_token(self):
         status, body = await request("POST", "/analysis-jobs", {
