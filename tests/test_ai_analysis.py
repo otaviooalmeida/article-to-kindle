@@ -280,6 +280,22 @@ class AiAnalysisApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Customize Consent Preferences", title_entry["nearby"])
         self.assertNotIn("Another story for you", json.dumps(FakeOllamaHandler.requests))
 
+    async def test_sticky_top_css_class_is_not_mistaken_for_cookieyes(self):
+        html = '''<html><body><div class="[--sticky-top:var(--header-h)]"><article>
+        <h1>Feature title</h1>
+        <p>The article opens with enough complete prose to establish the main topic and preserve the author's explanation for readers.</p>
+        <p>Its second paragraph adds more context and detail, confirming this is substantive article content rather than page chrome.</p>
+        </article></div></body></html>'''
+
+        job_id = await self.create_job(html)
+        result = await self.wait_for_job(job_id)
+
+        self.assertEqual("completed", result["status"])
+        article = result["result"]
+        self.assertEqual("ai", article["analysisMode"], article.get("fallbackReason"))
+        self.assertIn("author's explanation", article["html"])
+        self.assertIn("author's explanation", json.dumps(FakeOllamaHandler.requests))
+
     async def test_author_byline_does_not_absorb_publication_date_or_read_time(self):
         html = '''<article><h1>Feature title</h1>
         <p class="byline">Spyros Georgopoulos October 30, 2026 9 min read</p>

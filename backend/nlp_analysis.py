@@ -74,7 +74,7 @@ CONSENT_CONTAINER_MARKERS = re.compile(
 )
 CONSENT_VENDOR_MARKERS = re.compile(
     r"\b(?:cookieyes|cookiebot|onetrust|didomi|iubenda|termly|trustarc|cmplz|complianz|"
-    r"cookieconsent|cc-window)\b|cky[-_]",
+    r"cookieconsent|cc-window)\b|\bcky[-_]",
     re.IGNORECASE,
 )
 WIDGET_MARKERS = re.compile(
