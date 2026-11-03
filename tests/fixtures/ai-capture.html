@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head>
+<meta property="og:title" content="Rendered AI article">
+<meta name="author" content="Ada Lovelace">
+<script src="../../web_extension/vendor/Readability.js"></script>
+<script src="../../web_extension/content.js"></script>
+</head><body>
+<article>
+<header><h1>Rendered AI article</h1><p class="byline">By Ada Lovelace</p><img class="avatar" src="author.png" alt="Author portrait"></header>
+<p>This article body contains enough original text for the capture script to identify a complete article and preserve its source HTML.</p>
+<figure><img src="diagram.png" alt="Editorial diagram"><figcaption>A useful article figure.</figcaption></figure>
+<p>The conclusion remains present after both images in the original page snapshot.</p>
+</article>
+<script>
+try {
+  const result = captureArticle(document, "https://publisher.example.org/article");
+  const snapshot = new DOMParser().parseFromString(result.pageHtml, "text/html");
+  const ok = snapshot.querySelector('img[class="avatar"][alt="Author portrait"]') &&
+    snapshot.querySelector('img[alt="Editorial diagram"]') &&
+    snapshot.body.textContent.includes("The conclusion remains present") &&
+    !result.pageHtml.includes("onclick=") && !result.pageHtml.includes("alert(");
+  document.title = ok ? "PASS" : `FAIL:${JSON.stringify({ pageHtml: result.pageHtml, html: result.html })}`;
+} catch (error) { document.title = `FAIL:${error.message}`; }
+</script>
+</body></html>

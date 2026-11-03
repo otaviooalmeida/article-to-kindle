@@ -1,64 +1,59 @@
 let capture;
+const openedAt = Date.now();
 const title = document.querySelector("#title");
 const status = document.querySelector("#status");
 const previewButton = document.querySelector("#preview");
+const modeFieldset = document.querySelector("#analysis-mode");
+
+function selectedMode() {
+  return document.querySelector('input[name="analysis-mode"]:checked')?.value || "standard";
+}
 
 function state(message, disabled = false) {
   status.textContent = message;
   previewButton.disabled = disabled || !capture;
+  modeFieldset.disabled = disabled || !capture;
 }
 
 document.querySelector("#options").addEventListener("click", () => chrome.runtime.openOptionsPage());
 
-async function analyzeCapture(captured) {
-  if (!captured.pageHtml) return captured;
-  const { serverUrl, token } = await chrome.storage.local.get({ serverUrl: "http://127.0.0.1:8765", token: "" });
-  if (!token) throw new Error("Configure the local companion token in Settings before analyzing this page.");
-  const payload = {
-    sourceUrl: captured.sourceUrl,
-    html: captured.pageHtml,
-    title: captured.title,
-    author: captured.author === "Unknown author" ? undefined : captured.author,
-  };
-  let response;
-  try {
-    response = await fetch(`${serverUrl}/analyze`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "X-Article-To-Kindle-Origin": new URL(chrome.runtime.getURL("/")).origin,
-      },
-      body: JSON.stringify(payload),
-    });
-  } catch (error) {
-    if (error instanceof TypeError) throw new Error("Local companion unavailable. Start it with article-to-kindle serve.");
-    throw error;
-  }
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.message || "Local article analysis failed.");
-  return result;
-}
+modeFieldset.addEventListener("change", () => {
+  chrome.storage.local.set({ analysisMode: selectedMode() });
+});
 
 previewButton.addEventListener("click", async () => {
   try {
-    state("Opening preview…", true);
+    state("Opening article review…", true);
+    capture.analysisMode = selectedMode();
+    capture.analysisRequestedAt = openedAt;
+    capture.estimatedTextLength = capture.pageHtml
+      ? capture.pageHtml.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").length
+      : 0;
     const id = await ArticleCaptureStore.saveCapture(capture);
-    await chrome.tabs.create({ url: chrome.runtime.getURL(`preview.html?id=${encodeURIComponent(id)}`) });
+    await chrome.tabs.create({
+      url: chrome.runtime.getURL(`preview.html?id=${encodeURIComponent(id)}`),
+    });
     window.close();
   } catch (error) {
     state(error.message || "Could not open the article preview.");
   }
 });
 
-chrome.runtime.sendMessage({ type: "capture" }).then(async result => {
-  if (result.error || !result.capture) throw new Error(result.error || "Article content not detected.");
-  title.textContent = result.capture.title;
-  state("Analyzing article…", true);
-  capture = await analyzeCapture(result.capture);
-  title.textContent = capture.title;
-  state("Review and edit the article before sending it.");
-}).catch(error => {
-  title.textContent = "No article detected";
-  state(error.message, true);
-});
+(async () => {
+  try {
+    const [preferences, result] = await Promise.all([
+      chrome.storage.local.get({ analysisMode: "standard" }),
+      chrome.runtime.sendMessage({ type: "capture" }),
+    ]);
+    document.querySelectorAll('input[name="analysis-mode"]').forEach(option => {
+      option.checked = option.value === (preferences.analysisMode === "ai" ? "ai" : "standard");
+    });
+    if (result.error || !result.capture) throw new Error(result.error || "Article content not detected.");
+    capture = result.capture;
+    title.textContent = capture.title;
+    state("Choose Standard or AI-assisted extraction, then review the article.");
+  } catch (error) {
+    title.textContent = "No article detected";
+    state(error.message || "Could not capture this article.", true);
+  }
+})();

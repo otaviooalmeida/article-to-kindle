@@ -170,6 +170,11 @@
       if (node.nodeType !== Node.ELEMENT_NODE) return;
       const tag = node.localName.toLowerCase();
       if (DROP_TAGS.has(tag)) return;
+      if (node.hasAttribute("data-article-to-kindle-excluded")) {
+        flushInline();
+        blocks.push([node]);
+        return;
+      }
       if (isMathRenderer(node)) {
         const math = node.querySelector("math");
         if (math) {
@@ -213,9 +218,12 @@
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.className = "include-block";
-      checkbox.checked = true;
-      block.dataset.included = "true";
-      checkbox.setAttribute("aria-label", `Include section ${index + 1} in the Reading Copy`);
+      const excluded = sources.some(source => source.nodeType === Node.ELEMENT_NODE &&
+        source.getAttribute("data-article-to-kindle-excluded") === "true");
+      checkbox.checked = !excluded;
+      block.dataset.included = String(!excluded);
+      block.dataset.analysisExcluded = String(excluded);
+      checkbox.setAttribute("aria-label", `${excluded ? "Restore" : "Include"} section ${index + 1} in the Reading Copy`);
       const labelText = document.createElement("span");
       labelText.className = "visually-hidden";
       labelText.textContent = `Include section ${index + 1}`;

@@ -9,9 +9,6 @@ import re
 import socket
 from datetime import date, datetime
 from io import BytesIO
-import mimetypes
-import re
-from html import escape
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote_to_bytes, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -290,8 +287,16 @@ def make_absolute(url: str, base_url: str) -> str | None:
     return absolute if urlparse(absolute).scheme in {"http", "https"} else None
 
 
-def remove_noise(root: Tag, author: str, *, select_content: bool = True) -> None:
+def remove_noise(
+    root: Tag,
+    author: str,
+    *,
+    select_content: bool = True,
+    _preserve_comment_prefix: str | None = None,
+) -> None:
     for comment in root.find_all(string=lambda value: isinstance(value, Comment)):
+        if _preserve_comment_prefix and str(comment).startswith(_preserve_comment_prefix):
+            continue
         comment.extract()
     selector = "script, style, noscript, svg, iframe, form, button"
     if select_content:
@@ -455,16 +460,23 @@ def download_images(root: Tag) -> tuple[list[ImageAsset], int]:
             total_bytes += len(data)
             fetched[source] = asset
             tag["src"] = asset.href
-        except (ArticleError, ValueError, TypeError):
+        except (ArticleError, ValueError, TypeError, OSError, Image.DecompressionBombError):
             tag.decompose()
             failed += 1
     return assets, failed
 
 
 def analyze_article_html(page_html: str, source_url: str, *, title: str | None = None,
-                         author: str | None = None) -> dict:
-    """Select and sanitize an article snapshot without fetching its images."""
-    if len(page_html.encode("utf-8")) > MAX_HTML_BYTES:
+                         author: str | None = None,
+                         _block_tracking_attribute: str | None = None,
+                         _block_tracking_comment_prefix: str | None = None,
+                         _capture_size_already_checked: bool = False) -> dict:
+    """Select and sanitize an article snapshot without fetching its images.
+
+    The private tracking option lets AI review map Standard's retained blocks back
+    to their source nodes without exposing tracking attributes in returned HTML.
+    """
+    if not _capture_size_already_checked and len(page_html.encode("utf-8")) > MAX_HTML_BYTES:
         raise ArticleError("Article HTML exceeds 10 MiB.")
     soup = BeautifulSoup(page_html, "html.parser")
     json_title, json_author = json_ld_metadata(soup)
@@ -476,12 +488,40 @@ def analyze_article_html(page_html: str, source_url: str, *, title: str | None =
     resolved_author = (author or "").strip() or json_author or clean_text(first_meta(soup, "author", "article:author")) or "Unknown author"
     trim_article_end(root)
     warnings = extract_math(root)
-    remove_noise(root, resolved_author)
-    sanitize_article(root, source_url)
-    deduplicate_content(root, resolved_title)
+    remove_noise(
+        root, resolved_author,
+        _preserve_comment_prefix=_block_tracking_comment_prefix,
+    )
+    selected_block_ids = None
+    if _block_tracking_attribute:
+        # Deduplicate while source IDs are still attached so AI can review the
+        # same retained blocks as Standard, without exposing tracking markers.
+        deduplicate_content(root, resolved_title)
+        selected_block_ids = set()
+        tracked_nodes = ([root] if root.has_attr(_block_tracking_attribute) else [])
+        tracked_nodes.extend(root.find_all(attrs={_block_tracking_attribute: True}))
+        for node in tracked_nodes:
+            selected_block_ids.update(
+                value for value in str(node.get(_block_tracking_attribute, "")).split(",") if value
+            )
+        if _block_tracking_comment_prefix:
+            for comment in root.find_all(
+                string=lambda value: isinstance(value, Comment)
+                and str(value).startswith(_block_tracking_comment_prefix)
+            ):
+                value = str(comment)[len(_block_tracking_comment_prefix):]
+                if value:
+                    selected_block_ids.add(value)
+                comment.extract()
+        for node in [root, *root.find_all(True)]:
+            node.attrs.pop(_block_tracking_attribute, None)
+        sanitize_article(root, source_url)
+    else:
+        sanitize_article(root, source_url)
+        deduplicate_content(root, resolved_title)
     if len(clean_text(root.get_text(" ", strip=True))) < 100:
         raise ArticleError("Could not find enough readable article content (it may be paywalled).")
-    return {
+    result = {
         "title": resolved_title,
         "author": resolved_author,
         "publishedDate": published_date,
@@ -489,6 +529,9 @@ def analyze_article_html(page_html: str, source_url: str, *, title: str | None =
         "html": f"<article>{''.join(str(child) for child in root.contents)}</article>",
         "warnings": warnings,
     }
+    if selected_block_ids is not None:
+        result["_selectedBlockIds"] = sorted(selected_block_ids)
+    return result
 
 
 def extract_article(page_html: str, source_url: str, *, select_content: bool = True) -> Article:

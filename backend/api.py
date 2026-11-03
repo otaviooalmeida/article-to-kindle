@@ -3,6 +3,7 @@
 import hmac
 import os
 import tempfile
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
@@ -12,10 +13,12 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from .config import ALLOWED_ORIGIN, API_TOKEN, KINDLE_EMAIL, MAX_CAPTURE_BYTES, MAX_EPUB_BYTES, load_dotenv
+from .analysis_jobs import analysis_jobs
 from .delivery import is_valid_email_address, send_to_kindle
 from .epub import write_epub
 from .errors import ArticleError
 from .extractor import analyze_article_html, extract_article, require_article_url, slugify
+from .nlp_analysis import ollama_client
 from .reading_copy import prepare_html
 
 
@@ -56,7 +59,7 @@ class OriginMiddleware:
 
     @staticmethod
     def headers(origin):
-        return {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Article-To-Kindle-Origin", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Expose-Headers": "X-Article-Warnings"}
+        return {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Article-To-Kindle-Origin", "Access-Control-Allow-Methods": "DELETE, GET, POST, OPTIONS", "Access-Control-Expose-Headers": "X-Article-Warnings"}
 
 
 load_dotenv()
@@ -91,10 +94,24 @@ class ArticleAnalysisRequest(BaseModel):
     author: str | None = Field(default=None, max_length=300)
 
 
+class AnalysisJobRequest(ArticleAnalysisRequest):
+    mode: str = Field(default="standard", pattern="^(standard|ai)$")
+
+
 async def authenticate(authorization: str = Header(default="")) -> None:
     expected = f"Bearer {os.environ.get(API_TOKEN, '')}"
     if not os.environ.get(API_TOKEN) or not hmac.compare_digest(authorization, expected):
         raise HTTPException(401, detail="Invalid bearer token.")
+
+
+@app.on_event("startup")
+def preload_ai_model() -> None:
+    ollama_client.preload_async()
+
+
+@app.on_event("shutdown")
+def stop_analysis_jobs() -> None:
+    analysis_jobs.close()
 
 
 @app.get("/health", dependencies=[Depends(authenticate)])
@@ -113,11 +130,39 @@ def analyze_capture(request: ArticleAnalysisRequest):
         raise HTTPException(400, detail=str(exception)) from exception
 
 
+@app.post("/analysis-jobs", status_code=202, dependencies=[Depends(authenticate)])
+def create_analysis_job(request: AnalysisJobRequest):
+    if len(request.html.encode("utf-8")) > MAX_CAPTURE_BYTES:
+        raise HTTPException(413, detail="Article capture exceeds 10 MiB.")
+    try:
+        require_article_url(request.sourceUrl)
+        return analysis_jobs.submit(request.mode, request.html, request.sourceUrl, request.title or "", request.author or "")
+    except ArticleError as exception:
+        raise HTTPException(400, detail=str(exception)) from exception
+    except RuntimeError as exception:
+        raise HTTPException(503, detail=str(exception)) from exception
+
+
+@app.get("/analysis-jobs/{job_id}", dependencies=[Depends(authenticate)])
+def get_analysis_job(job_id: str):
+    result = analysis_jobs.get(job_id)
+    if result is None:
+        raise HTTPException(404, detail="Article analysis job was not found or has expired.")
+    return result
+
+
+@app.delete("/analysis-jobs/{job_id}", dependencies=[Depends(authenticate)])
+def cancel_analysis_job(job_id: str):
+    result = analysis_jobs.cancel(job_id)
+    if result is None:
+        raise HTTPException(404, detail="Article analysis job was not found or has expired.")
+    return result
+
+
 def captured_article(capture: ArticleCapture):
     if len(capture.html.encode()) > MAX_CAPTURE_BYTES:
         raise HTTPException(413, detail="Article capture exceeds 10 MiB.")
     try:
-        require_article_url(capture.sourceUrl)
         page_html = prepare_html(capture.html, capture.sourceUrl,
                                  title=capture.title, author=capture.author)
         article = extract_article(page_html, capture.sourceUrl, select_content=False)
@@ -128,40 +173,35 @@ def captured_article(capture: ArticleCapture):
     return article
 
 
-def warning_headers(article) -> dict[str, str]:
-    return {"X-Article-Warnings": "; ".join(article.warnings)}
-
-
-def write_article_epub(article, output: Path) -> None:
-    try:
-        write_epub(article, output)
-    except (OSError, ValueError) as exception:
-        raise HTTPException(422, detail="EPUB conversion failed.") from exception
+@contextmanager
+def article_epub(capture: ArticleCapture):
+    article = captured_article(capture)
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory) / f"{slugify(article.title)}.epub"
+        try:
+            write_epub(article, output)
+        except (OSError, ValueError) as exception:
+            raise HTTPException(422, detail="EPUB conversion failed.") from exception
+        if output.stat().st_size > MAX_EPUB_BYTES:
+            raise HTTPException(413, detail="Generated EPUB exceeds 50 MiB.")
+        yield article, output
 
 
 @app.post("/epub", dependencies=[Depends(authenticate)])
-async def create_epub(capture: ArticleCapture):
-    article = captured_article(capture)
-    with tempfile.TemporaryDirectory() as directory:
-        output = Path(directory) / "article.epub"
-        write_article_epub(article, output)
-        if output.stat().st_size > MAX_EPUB_BYTES:
-            raise HTTPException(413, detail="Generated EPUB exceeds 50 MiB.")
-        content = output.read_bytes()
-    return Response(content, media_type="application/epub+zip", headers={"Content-Disposition": f'attachment; filename="{slugify(article.title)}.epub"', **warning_headers(article)})
+def create_epub(capture: ArticleCapture):
+    with article_epub(capture) as (article, output):
+        return Response(output.read_bytes(), media_type="application/epub+zip", headers={
+            "Content-Disposition": f'attachment; filename="{output.name}"',
+            "X-Article-Warnings": "; ".join(article.warnings),
+        })
 
 
 @app.post("/kindle", dependencies=[Depends(authenticate)])
-async def submit_to_kindle(capture: ArticleCapture):
+def submit_to_kindle(capture: ArticleCapture):
     recipient = (capture.kindleEmail or os.environ.get(KINDLE_EMAIL, "")).strip()
     if not is_valid_email_address(recipient):
         raise HTTPException(400, detail="Enter a valid Kindle email address.")
-    article = captured_article(capture)
-    with tempfile.TemporaryDirectory() as directory:
-        output = Path(directory) / f"{article.title}.epub"
-        write_article_epub(article, output)
-        if output.stat().st_size > MAX_EPUB_BYTES:
-            raise HTTPException(413, detail="Generated EPUB exceeds 50 MiB.")
+    with article_epub(capture) as (article, output):
         try:
             send_to_kindle(article, output, recipient)
         except ArticleError as exception:

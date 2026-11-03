@@ -6,7 +6,13 @@
     <h1>Article to Kindle</h1>
     <p id="title">Detecting article…</p>
     <p id="status" role="status" aria-live="polite"></p>
-    <button id="preview" disabled>Preview &amp; select content</button>
+    <fieldset id="analysis-mode" aria-label="Article extraction method" disabled>
+      <legend>Extraction method</legend>
+      <label><input type="radio" name="analysis-mode" value="standard" checked> Standard</label>
+      <label><input type="radio" name="analysis-mode" value="ai"> AI-assisted</label>
+      <p class="help-text">AI labels the original article using your configured GPU. Long pages may take longer.</p>
+    </fieldset>
+    <button id="preview" disabled>Open article preview</button>
     <button id="options" class="link">Settings</button>
   </main>
 </body>

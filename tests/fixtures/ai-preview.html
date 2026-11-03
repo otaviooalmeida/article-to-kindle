@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head>
+<script src="../../web_extension/preview-core.js"></script>
+</head><body>
+<div id="preview"></div>
+<script>
+try {
+  const capture = {
+    title: "AI article",
+    author: "Ada Lovelace",
+    sourceUrl: "https://publisher.example.org/article",
+    html: '<article><div data-article-to-kindle-excluded="false"><p>Article opening remains selected by default.</p></div><div data-article-to-kindle-excluded="true"><p>Recommendation can be restored.</p></div><div data-article-to-kindle-excluded="false"><figure><img src="https://cdn.example.org/diagram.png" alt="Editorial diagram"><figcaption>The original figure stays in order.</figcaption></figure></div></article>',
+  };
+  const preview = document.querySelector("#preview");
+  const count = ArticlePreview.renderArticle(capture, preview);
+  const blocks = [...preview.querySelectorAll(".preview-block")];
+  const defaults = blocks.map(block => block.querySelector(".include-block").checked);
+  const readingCopy = ArticlePreview.buildCapture(capture, preview, "AI article", "Ada Lovelace", false);
+  blocks[1].querySelector(".include-block").checked = true;
+  const restoredCopy = ArticlePreview.buildCapture(capture, preview, "AI article", "Ada Lovelace", false);
+  const correctOrder = restoredCopy.html.indexOf("Article opening") < restoredCopy.html.indexOf("Recommendation") &&
+    restoredCopy.html.indexOf("Recommendation") < restoredCopy.html.indexOf("Editorial diagram");
+  const ok = count === 3 && defaults.join(",") === "true,false,true" &&
+    readingCopy.html.includes("Article opening") && readingCopy.html.includes("diagram.png") &&
+    !readingCopy.html.includes("Recommendation") && restoredCopy.html.includes("Recommendation") && correctOrder;
+  document.title = ok ? "PASS" : `FAIL:${JSON.stringify({ count, defaults, readingCopy: readingCopy.html, restoredCopy: restoredCopy.html })}`;
+} catch (error) { document.title = `FAIL:${error.message}`; }
+</script>
+</body></html>

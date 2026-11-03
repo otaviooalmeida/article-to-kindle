@@ -13,6 +13,8 @@
     <h1 class="app-brand">Article to Kindle</h1>
     <nav class="preview-toolbar" aria-label="Article preview controls">
       <span class="preview-label">Preview</span>
+      <span id="analysis-mode-label" class="analysis-mode-label" hidden></span>
+      <button id="compare-analysis" class="link" type="button" hidden>Compare with AI</button>
       <a id="original-article" class="link" target="_blank" rel="noopener" hidden>View original article</a>
       <button id="options" class="link" type="button">Settings</button>
     </nav>
@@ -40,6 +42,11 @@
           <span id="image-summary" class="option-summary"></span>
           <span id="link-summary" class="option-summary"></span>
         </div>
+        <section id="analysis-status" class="analysis-status" aria-live="polite" hidden>
+          <p id="analysis-progress" role="status"></p>
+          <p id="analysis-warning" class="help-text" hidden></p>
+          <button id="use-standard" type="button" hidden>Use standard extraction</button>
+        </section>
         <fieldset id="editor" hidden>
           <legend class="visually-hidden">Edit the Reading Copy</legend>
           <div class="metadata-fields">
@@ -56,6 +63,11 @@
           <p class="help-text">Uncheck sections to omit them, or edit text directly. Included sections are marked in the margin; omitted sections are dashed.</p>
         </fieldset>
         <div id="content" class="preview-content"></div>
+        <details id="excluded-content" class="excluded-content" hidden>
+          <summary>Excluded content <span id="excluded-count"></span></summary>
+          <p class="help-text">Restore any block that belongs in the article. Restored blocks return to their original position.</p>
+          <ul id="excluded-list"></ul>
+        </details>
       </article>
     </section>
     <aside class="delivery-panel" aria-label="Kindle delivery and download">

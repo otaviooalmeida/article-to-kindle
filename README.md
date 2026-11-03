@@ -6,7 +6,8 @@ The project is early-stage: extraction depends on publisher markup, and Kindle r
 
 ## Features
 
-- Analyze rendered pages locally with Readability while preserving original article HTML, code, tables, formulas, and images.
+- Analyze rendered pages with the Standard extractor or explicitly selected AI labeling while preserving original article HTML, code, tables, formulas, and images.
+- Compare Standard and AI extraction from the same snapshot; restore AI-excluded blocks in the preview before exporting.
 - Extract structured publication dates and include them in the preview and EPUB metadata.
 - Convert URLs, saved HTML, Article Capture JSON, or URL lists.
 - Preview, edit, and select captured sections in Chrome.
@@ -54,10 +55,11 @@ Article Capture JSON contains `title`, `author`, `sourceUrl`, and `html` fields.
 2. Copy the extension origin shown in its Settings.
 3. Run `article-to-kindle setup`; enter the origin and optionally configure SMTP.
 4. Copy `ARTICLE_TO_KINDLE_TOKEN` from the generated configuration into the extension settings.
-5. Start the local companion with `article-to-kindle serve`.
-6. Open a supported article, launch the extension, and let the companion analyze the rendered page before preview. Review or edit the capture, then download the EPUB or submit it to Kindle.
+5. For AI mode, install your SSH public key on the GPU host (for example, `ssh-copy-id agrisat@10.230.102.83`). The companion manages a loopback-only SSH tunnel; passwords are never stored in the extension or `.env`.
+6. Start the local companion with `article-to-kindle serve`. It preloads `qwen2.5:3b` on the configured Ollama server and keeps it warm.
+7. Open an article, launch the extension, select Standard or AI-assisted extraction, then review the result. Use **Compare with AI/standard** to open an independent preview of the same page snapshot. Edit or restore sections before downloading or submitting.
 
-The companion listens only on `127.0.0.1:8765`. Do not expose it to a network. SMTP credentials remain in the local Python configuration, not in Chrome.
+The companion listens only on `127.0.0.1:8765`. Do not expose it to a network. SMTP credentials remain in the local Python configuration, not in Chrome. SSH forwarding targets only the GPU host's `127.0.0.1:11434` Ollama listener and binds locally on `127.0.0.1:11435`; the remote inference server is not exposed publicly. The companion requires working OpenSSH key authentication and strict host-key verification for AI mode.
 
 ## Configuration and email
 
@@ -69,7 +71,9 @@ Approve `SMTP_FROM` in Amazon's [Personal Document Settings](https://www.amazon.
 
 The project accepts HTTP(S) pages from any publisher; it no longer requires a host to be listed in the source code. Outbound requests require public DNS addresses, and local/private destinations and redirects are blocked. This does not mean every page contains an extractable article: the page still needs readable article content, and extraction quality varies by publisher.
 
-CLI URL conversion fetches the page's public HTML but does not execute JavaScript or use browser sessions; use the extension for JavaScript-rendered content already visible in Chrome. The extension accepts public HTTP(S) pages and sends an inert DOM snapshot to the authenticated loopback companion before preview. The companion uses Readability with a selector fallback and retains source HTML for the existing sanitization and EPUB pipeline. Publication dates come from structured metadata or explicit date metadata, not guesses from article prose. Neither path bypasses paywalls or transfers browser cookies.
+CLI URL conversion fetches the page's public HTML but does not execute JavaScript or use browser sessions; use the extension for JavaScript-rendered content already visible in Chrome. The extension accepts public HTTP(S) pages and sends an inert DOM snapshot to the authenticated loopback companion before preview. Standard mode uses Readability with a selector fallback. Opt-in AI mode first runs Standard extraction, then asks `qwen2.5:3b` to conservatively review its selected blocks and nearby title/byline metadata. The model returns labels only; the companion rebuilds from original source blocks in source order, and exclusions remain available for restoration. Long pages are processed in overlapping chunks without truncation; 15 seconds is a performance target, not a timeout. If AI inference fails, the preview is clearly labeled and Standard extraction is shown instead.
+
+AI mode sends article text, small structural labels, and title/author hints through the SSH tunnel to the GPU for inference; it does not send the source URL, link/image addresses, cookies, or browser credentials. Article content is not written to remote files or logged by this application. The model remains loaded while in use. An unusually long article may take longer; readers can switch to Standard extraction or compare both results from the same snapshot. Publication dates come from structured metadata or explicit date metadata, not guesses from article prose. Neither path bypasses paywalls or transfers browser cookies.
 
 Formula conversion uses MathML where possible; unsupported formulas remain text with a warning. Image and layout compatibility depends on the source site and Kindle software.
 
