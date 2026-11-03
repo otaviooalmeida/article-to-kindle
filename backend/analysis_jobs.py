@@ -78,7 +78,7 @@ class ArticleAnalysisJobs:
             if job.status not in {"completed", "failed", "cancelled"}:
                 job.cancelled.set()
                 job.status = "cancelled"
-                job.page_html = ""
+                job.page_html = job.source_url = job.title = job.author = ""
                 job.progress = {**job.progress, "message": "Article analysis cancelled."}
                 if job.future:
                     job.future.cancel()
@@ -110,8 +110,7 @@ class ArticleAnalysisJobs:
             job.status = "completed"
             job.progress = {"current": 1, "total": 1, "message": "Article analysis complete."}
             # Once finished, retain only the analyzed result needed by the preview.
-            job.page_html = ""
-            job.source_url = job.title = job.author = ""
+            job.page_html = job.source_url = job.title = job.author = ""
 
     def _fail(self, job: AnalysisJob, message: str) -> None:
         with self._lock:
@@ -120,8 +119,7 @@ class ArticleAnalysisJobs:
             job.status = "failed"
             job.error = message
             job.progress = {**job.progress, "message": message}
-            job.page_html = ""
-            job.source_url = job.title = job.author = ""
+            job.page_html = job.source_url = job.title = job.author = ""
 
     def _run(self, job: AnalysisJob) -> None:
         if job.cancelled.is_set():
@@ -143,10 +141,7 @@ class ArticleAnalysisJobs:
                         cancelled=job.cancelled,
                     )
                 except AnalysisCancelled:
-                    with self._lock:
-                        job.cancelled.set()
-                        job.status = "cancelled"
-                        job.page_html = ""
+                    self.cancel(job.identifier)
                     return
                 except Exception as failure:
                     if job.cancelled.is_set():
@@ -171,13 +166,8 @@ class ArticleAnalysisJobs:
 
     def close(self) -> None:
         with self._lock:
-            for job in self._jobs.values():
-                if job.status in {"queued", "running"}:
-                    job.cancelled.set()
-                    job.status = "cancelled"
-                    job.progress = {**job.progress, "message": "Article analysis cancelled."}
-                    job.page_html = ""
-                    job.source_url = job.title = job.author = ""
+            for identifier in self._jobs:
+                self.cancel(identifier)
         self._ai_executor.shutdown(wait=False, cancel_futures=True)
         self._standard_executor.shutdown(wait=False, cancel_futures=True)
         self._client.close()

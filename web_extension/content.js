@@ -61,7 +61,8 @@
 
   function snapshotHtml(doc) {
     const snapshot = doc.documentElement.cloneNode(true);
-    snapshot.querySelectorAll('script:not([type="application/ld+json"]),style,noscript,iframe,form,input,textarea,button,svg').forEach(node => node.remove());
+    // Match clone/source images before removing containers that may hold images.
+    // Pruning first shifts indices and assigns unrelated URLs to article figures.
     const sourceImages = [...doc.querySelectorAll("img")];
     [...snapshot.querySelectorAll("img")].forEach((image, index) => {
       const source = sourceImages[index];
@@ -77,6 +78,7 @@
       image.removeAttribute("data-src");
       image.removeAttribute("data-srcset");
     });
+    snapshot.querySelectorAll('script:not([type="application/ld+json"]),style,noscript,iframe,form,input,textarea,button,svg').forEach(node => node.remove());
     snapshot.querySelectorAll("source").forEach(source => source.remove());
     snapshot.querySelectorAll("*").forEach(node => [...node.attributes]
       .filter(attribute => /^on/i.test(attribute.name))

@@ -36,15 +36,11 @@ from .extractor import (
 )
 
 
-MODEL_NAME = AI_DEFAULT_MODEL
 MODEL_CONTEXT_TOKENS = 32768
 MAX_ENTRY_CHARS = 6000
 MAX_WINDOW_CHARS = 18000
 MAX_WINDOW_ENTRIES = 40
 WINDOW_OVERLAP_ENTRIES = 2
-SSH_TARGET = AI_SSH_TARGET
-OLLAMA_URL = AI_OLLAMA_URL
-MODEL_SETTING = AI_MODEL
 
 BLOCK_TAGS = {
     "address", "blockquote", "dd", "dt", "figcaption", "figure", "h1", "h2", "p",
@@ -127,7 +123,6 @@ class ArticleBlock:
     node: Tag
     text: str
     context: str
-    entry_ids: list[int]
     source_node: Tag
     source_anchor: Tag | NavigableString | None = None
     fixed_label: str | None = None
@@ -269,10 +264,6 @@ def _visible_text(node: Tag) -> str:
     return clean_text(" ".join([text, *(value for value in descriptions if value)]))
 
 
-def _has_block_descendant(node: Tag) -> bool:
-    return any(child.name in BLOCK_TAGS for child in node.find_all(BLOCK_TAGS))
-
-
 def _copy_inline_group(soup: BeautifulSoup, parent: Tag, children: list[Tag | NavigableString]) -> Tag:
     wrapper = soup.new_tag(parent.name or "div")
     for key in ("id", "class", "role", "itemprop", "aria-label", "data-testid"):
@@ -315,7 +306,7 @@ def _collect_blocks(
                 continue
             if isinstance(child, Tag) and child.name in SKIP_TAGS:
                 continue
-            if isinstance(child, Tag) and (child.name in BLOCK_TAGS or _has_block_descendant(child)):
+            if isinstance(child, Tag) and (child.name in BLOCK_TAGS or child.find(BLOCK_TAGS) is not None):
                 flush_inline()
                 walk(child)
             else:
@@ -371,7 +362,6 @@ def _model_entries(blocks: list[ArticleBlock]) -> list[dict]:
                 "standardDecision": block.standard_decision,
                 "text": text,
             })
-            block.entry_ids.append(identifier)
             identifier += 1
     return entries
 
@@ -409,10 +399,6 @@ def _clean_author_name(value: str) -> str:
     text = re.sub(r"[<>]", "", text).strip(" ,;|·•()")
     text = re.sub(r"\(\s*\)", "", text)
     return clean_text(text)
-
-
-def _extract_metadata_text(block: ArticleBlock) -> str:
-    return _clean_author_name(block.text)
 
 
 def _safe_media_fallback(node: Tag, soup: BeautifulSoup, source_url: str, warnings: list[str]) -> Tag:
@@ -530,8 +516,6 @@ def _obvious_noise(block: ArticleBlock) -> bool:
         "advertisement", "avatar", "comment", "comments", "cookie-banner", "newsletter",
         "read-next", "recommend", "recommended", "recommendation", "share", "social-share",
     }
-    if block.node.name in {"nav", "footer"} and "article" not in tokens:
-        return True
     if any(token in noise_classes for token in tokens):
         return True
     recommendation_copy = re.compile(
@@ -628,7 +612,6 @@ def analyze_article_with_ai(
             node=node,
             text=_block_text(node),
             context=_block_context(node),
-            entry_ids=[],
             source_node=source_node,
             source_anchor=source_anchor,
         ))
@@ -695,7 +678,7 @@ def analyze_article_with_ai(
         block.index: [block.fixed_label] if block.fixed_label else []
         for block in blocks
     }
-    model = os.environ.get(MODEL_SETTING, MODEL_NAME).strip() or MODEL_NAME
+    model = os.environ.get(AI_MODEL, AI_DEFAULT_MODEL).strip() or AI_DEFAULT_MODEL
 
     for window_index, window in enumerate(windows, start=1):
         if cancelled and cancelled.is_set():
@@ -743,8 +726,8 @@ def analyze_article_with_ai(
 
     title_blocks = [block for block in blocks if block_labels[block.index] == "title"]
     author_blocks = [block for block in blocks if block_labels[block.index] == "author"]
-    resolved_title = _extract_metadata_text(title_blocks[0]) if title_blocks else fallback_title
-    resolved_author_names = [_extract_metadata_text(block) for block in author_blocks]
+    resolved_title = title_blocks[0].text if title_blocks else fallback_title
+    resolved_author_names = [_clean_author_name(block.text) for block in author_blocks]
     resolved_author_names = list(dict.fromkeys(name for name in resolved_author_names if name))
     resolved_author = ", ".join(resolved_author_names) if resolved_author_names else fallback_author
     if not resolved_title:
@@ -809,9 +792,9 @@ class OllamaClient:
 
     @staticmethod
     def _configuration() -> tuple[str, str, str, str]:
-        target = os.environ.get(SSH_TARGET, AI_DEFAULT_SSH_TARGET).strip()
-        base_url = os.environ.get(OLLAMA_URL, AI_DEFAULT_OLLAMA_URL).rstrip("/")
-        model = os.environ.get(MODEL_SETTING, MODEL_NAME).strip() or MODEL_NAME
+        target = os.environ.get(AI_SSH_TARGET, AI_DEFAULT_SSH_TARGET).strip()
+        base_url = os.environ.get(AI_OLLAMA_URL, AI_DEFAULT_OLLAMA_URL).rstrip("/")
+        model = os.environ.get(AI_MODEL, AI_DEFAULT_MODEL).strip() or AI_DEFAULT_MODEL
         local_port = urlparse(base_url).port
         if urlparse(base_url).scheme != "http" or urlparse(base_url).hostname not in {"127.0.0.1", "localhost"} or not local_port:
             raise AiAnalysisError("AI analysis must use an HTTP endpoint bound to loopback.")
@@ -871,7 +854,7 @@ class OllamaClient:
             process.kill()
             process.wait(timeout=3)
 
-    def _post(self, path: str, payload: dict, *, timeout: float = 30):
+    def _post(self, path: str, payload: dict, *, timeout: float | None):
         if not self._base_url:
             raise AiAnalysisError("The Ollama endpoint is not ready.")
         request = Request(
@@ -925,27 +908,22 @@ class OllamaClient:
         self._ensure_ready()
         if cancelled and cancelled.is_set():
             raise AnalysisCancelled
-        model_setting = os.environ.get(MODEL_SETTING, MODEL_NAME).strip() or MODEL_NAME
+        model_setting = os.environ.get(AI_MODEL, AI_DEFAULT_MODEL).strip() or AI_DEFAULT_MODEL
         if model != model_setting:
             raise AiAnalysisError("The AI model configuration changed during analysis.")
-        request = Request(
-            f"{self._base_url}/api/chat",
-            data=json.dumps({
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ],
-                "format": schema,
-                "stream": True,
-                "keep_alive": -1,
-                "options": {"temperature": 0, "num_ctx": MODEL_CONTEXT_TOKENS, "num_predict": 4096},
-            }).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        request_payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            "format": schema,
+            "stream": True,
+            "keep_alive": -1,
+            "options": {"temperature": 0, "num_ctx": MODEL_CONTEXT_TOKENS, "num_predict": 4096},
+        }
         try:
-            with urlopen(request, timeout=None) as response:
+            with self._post("/api/chat", request_payload, timeout=None) as response:
                 watcher_stop = threading.Event()
 
                 def close_when_cancelled() -> None:

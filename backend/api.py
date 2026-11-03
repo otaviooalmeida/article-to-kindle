@@ -3,6 +3,7 @@
 import hmac
 import os
 import tempfile
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
@@ -162,7 +163,6 @@ def captured_article(capture: ArticleCapture):
     if len(capture.html.encode()) > MAX_CAPTURE_BYTES:
         raise HTTPException(413, detail="Article capture exceeds 10 MiB.")
     try:
-        require_article_url(capture.sourceUrl)
         page_html = prepare_html(capture.html, capture.sourceUrl,
                                  title=capture.title, author=capture.author)
         article = extract_article(page_html, capture.sourceUrl, select_content=False)
@@ -173,40 +173,35 @@ def captured_article(capture: ArticleCapture):
     return article
 
 
-def warning_headers(article) -> dict[str, str]:
-    return {"X-Article-Warnings": "; ".join(article.warnings)}
-
-
-def write_article_epub(article, output: Path) -> None:
-    try:
-        write_epub(article, output)
-    except (OSError, ValueError) as exception:
-        raise HTTPException(422, detail="EPUB conversion failed.") from exception
+@contextmanager
+def article_epub(capture: ArticleCapture):
+    article = captured_article(capture)
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory) / f"{slugify(article.title)}.epub"
+        try:
+            write_epub(article, output)
+        except (OSError, ValueError) as exception:
+            raise HTTPException(422, detail="EPUB conversion failed.") from exception
+        if output.stat().st_size > MAX_EPUB_BYTES:
+            raise HTTPException(413, detail="Generated EPUB exceeds 50 MiB.")
+        yield article, output
 
 
 @app.post("/epub", dependencies=[Depends(authenticate)])
-async def create_epub(capture: ArticleCapture):
-    article = captured_article(capture)
-    with tempfile.TemporaryDirectory() as directory:
-        output = Path(directory) / "article.epub"
-        write_article_epub(article, output)
-        if output.stat().st_size > MAX_EPUB_BYTES:
-            raise HTTPException(413, detail="Generated EPUB exceeds 50 MiB.")
-        content = output.read_bytes()
-    return Response(content, media_type="application/epub+zip", headers={"Content-Disposition": f'attachment; filename="{slugify(article.title)}.epub"', **warning_headers(article)})
+def create_epub(capture: ArticleCapture):
+    with article_epub(capture) as (article, output):
+        return Response(output.read_bytes(), media_type="application/epub+zip", headers={
+            "Content-Disposition": f'attachment; filename="{output.name}"',
+            "X-Article-Warnings": "; ".join(article.warnings),
+        })
 
 
 @app.post("/kindle", dependencies=[Depends(authenticate)])
-async def submit_to_kindle(capture: ArticleCapture):
+def submit_to_kindle(capture: ArticleCapture):
     recipient = (capture.kindleEmail or os.environ.get(KINDLE_EMAIL, "")).strip()
     if not is_valid_email_address(recipient):
         raise HTTPException(400, detail="Enter a valid Kindle email address.")
-    article = captured_article(capture)
-    with tempfile.TemporaryDirectory() as directory:
-        output = Path(directory) / f"{article.title}.epub"
-        write_article_epub(article, output)
-        if output.stat().st_size > MAX_EPUB_BYTES:
-            raise HTTPException(413, detail="Generated EPUB exceeds 50 MiB.")
+    with article_epub(capture) as (article, output):
         try:
             send_to_kindle(article, output, recipient)
         except ArticleError as exception:

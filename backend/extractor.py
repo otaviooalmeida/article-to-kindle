@@ -9,9 +9,6 @@ import re
 import socket
 from datetime import date, datetime
 from io import BytesIO
-import mimetypes
-import re
-from html import escape
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote_to_bytes, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -463,7 +460,7 @@ def download_images(root: Tag) -> tuple[list[ImageAsset], int]:
             total_bytes += len(data)
             fetched[source] = asset
             tag["src"] = asset.href
-        except (ArticleError, ValueError, TypeError):
+        except (ArticleError, ValueError, TypeError, OSError, Image.DecompressionBombError):
             tag.decompose()
             failed += 1
     return assets, failed

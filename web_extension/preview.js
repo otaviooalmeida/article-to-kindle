@@ -34,10 +34,6 @@ let requestedMode = "standard";
 let activeJobId = null;
 let runGeneration = 0;
 
-function selectedBlocks() {
-  return [...content.querySelectorAll(".include-block:checked")].length;
-}
-
 function updateExcludedContent() {
   const blocks = [...content.querySelectorAll(".preview-block")];
   const excluded = blocks.filter(block => !block.querySelector(".include-block").checked);
@@ -146,16 +142,8 @@ function setEditing(isEditing) {
   setStatus(editing ? "Edit text or choose sections to include in the Reading Copy." : "Previewing the Reading Copy.");
 }
 
-function extensionOrigin() {
-  return new URL(chrome.runtime.getURL("/")).origin;
-}
-
-async function settings() {
-  return chrome.storage.local.get({ serverUrl: "http://127.0.0.1:8765", token: "" });
-}
-
 async function call(path, payload, method = "POST") {
-  const { serverUrl, token } = await settings();
+  const { serverUrl, token } = await chrome.storage.local.get({ serverUrl: "http://127.0.0.1:8765", token: "" });
   if (!token) throw new Error("Configure the bearer token in Settings.");
   try {
     const response = await fetch(`${serverUrl}${path}`, {
@@ -164,7 +152,7 @@ async function call(path, payload, method = "POST") {
       headers: {
         "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json",
-        "X-Article-To-Kindle-Origin": extensionOrigin(),
+        "X-Article-To-Kindle-Origin": new URL(chrome.runtime.getURL("/")).origin,
       },
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     });
@@ -185,7 +173,7 @@ function currentCapture() {
     capture, content, titleInput.value, authorInput.value, !includeImagesInput.checked, permitLinksInput.checked,
   );
   if (!result.title) throw new Error("Enter a title for the Reading Copy.");
-  if (!selectedBlocks()) throw new Error("Select at least one content block.");
+  if (!content.querySelector(".include-block:checked")) throw new Error("Select at least one content block.");
   return result;
 }
 
@@ -325,10 +313,10 @@ async function compareAnalysis() {
       analysisRequestedAt: Date.now(),
     });
     await chrome.tabs.create({ url: chrome.runtime.getURL(`preview.html?id=${encodeURIComponent(id)}`) });
-    compareButton.disabled = false;
   } catch (error) {
-    compareButton.disabled = false;
     setAnalysisProgress("Could not open the comparison preview.", { busy: false, warning: error.message });
+  } finally {
+    compareButton.disabled = false;
   }
 }
 
